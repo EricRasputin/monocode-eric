@@ -75,7 +75,7 @@ impl SetupOrigin {
 
 pub(super) enum BeginSetup {
     Skip,
-    Run(SetupOperation),
+    Run(Box<SetupOperation>),
 }
 
 pub(super) enum FinishSetup {
@@ -774,7 +774,7 @@ pub(super) fn begin_setup(conn: &Connection, requested_path: &str) -> Result<Beg
     if changed != 1 {
         return Err("Worktree setup state changed; retry setup".into());
     }
-    Ok(BeginSetup::Run(SetupOperation {
+    Ok(BeginSetup::Run(Box::new(SetupOperation {
         worktree_id: row.worktree_id,
         root_path: row.path.clone(),
         path: super::path_to_js(&Path::new(&row.path).join(&row.project_path)),
@@ -789,7 +789,7 @@ pub(super) fn begin_setup(conn: &Connection, requested_path: &str) -> Result<Beg
             .filter(|path| !path.is_empty())
             .map(PathBuf::from),
         process_may_be_live: AtomicBool::new(false),
-    }))
+    })))
 }
 
 /// Run file restoration/copying and the optional command without a database or
@@ -1907,7 +1907,7 @@ fn setup_group_confirmed_absent(process_id: u32) -> bool {
                 == Some(ERROR_INVALID_PARAMETER as i32);
         }
         let process = unsafe { OwnedHandle::from_raw_handle(raw) };
-        return unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } == WAIT_OBJECT_0;
+        (unsafe { WaitForSingleObject(process.as_raw_handle(), 0) }) == WAIT_OBJECT_0
     }
     #[cfg(not(windows))]
     {
