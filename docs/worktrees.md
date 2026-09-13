@@ -2,11 +2,19 @@
 
 Choose where a conversation works using the two controls above the message box:
 
-- **New worktree · From main** — start an isolated task. Pick a different base if needed, then send your message. Monocode creates and names the branch and checkout before starting the agent. Selecting a base does not switch the source checkout.
+- **New worktree · From main** — start an isolated task. Pick a different base if needed, then send your message. Monocode creates the branch and checkout and completes setup before starting the agent. Selecting a base does not switch the source checkout.
 - **Current checkout · main** — work directly in your project folder.
 - **Existing worktree** — select a checkout from the workspace menu to continue work on that branch in another conversation.
 
 New worktree is the default in this fork. Your explicit choice belongs to the draft and survives a restart; it does not change another conversation. Once the conversation starts, its checkout stays fixed. Its agent, files, changes and terminal dock use that directory. Conversations remain grouped under the original project.
+
+New worktrees receive an AI-generated branch name based on your initial request, such as `monocode/add-history-search`. A short temporary name appears immediately; naming runs in the background alongside the conversation-title request and never delays the agent. Duplicate names receive a numeric suffix. If the provider cannot generate a name, the temporary name stays usable. A custom conversation title is preserved.
+
+Naming accepts structured JSON only, so provider quota or sign-in messages cannot become titles or branches. If naming fails or exceeds its 45-second deadline, a dismissible **AI naming unavailable** notice explaining that the default branch name was kept offers **Retry** when the provider supports naming. Retry uses the same provider and initial request; it does not create another worktree or automatically switch accounts/models. Repeated clicks share one attempt. The notice remains until dismissed or the retry completes; it is not restored after restarting the app.
+
+Retries remain subject to the original naming request's ownership and branch checks. A saved suggestion can be applied after setup succeeds. Native naming errors are shown separately from generation failures, and a branch that is no longer eligible is kept without reporting a successful rename. See the [T3 failure-handling comparison](worktree-naming-failures-research.md) for the source behavior behind this design.
+
+Naming keeps the checkout directory fixed. It only applies once to a newly created worktree, after successful setup; a setup retry can use an already saved suggestion. Existing worktrees and branches you switch or publish through Monocode are left as chosen. Observed external branch changes and upstream configuration also prevent a delayed automatic rename.
 
 A new worktree starts with committed files. In **Settings → Worktrees**, choose a project and configure its environment once:
 

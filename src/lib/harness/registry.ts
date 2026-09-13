@@ -15,6 +15,7 @@ export type TitleInput = {
   sessionId: string;
   cwd: string;
   message: string;
+  includeBranch?: boolean;
 };
 
 /**

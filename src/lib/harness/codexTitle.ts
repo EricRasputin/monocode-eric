@@ -12,11 +12,12 @@ export async function generateCodexSessionTitle(input: {
   sessionId: string;
   cwd: string;
   message: string;
+  includeBranch?: boolean;
 }): Promise<GeneratedSessionTitle | null> {
   try {
     const output = await runCodexTextPrompt({
       cwd: input.cwd,
-      prompt: buildThreadTitlePrompt(input.message),
+      prompt: buildThreadTitlePrompt(input.message, input.includeBranch),
       timeoutMs: TITLE_TIMEOUT_MS,
     });
     return parseGeneratedSessionTitle(output, input.message);
