@@ -14,12 +14,13 @@ async function generateSessionTitle(
     sessionId: string;
     cwd: string;
     message: string;
+    includeBranch?: boolean;
   },
 ): Promise<GeneratedSessionTitle | null> {
   try {
     const output = await runTextPrompt(flavor, {
       cwd: input.cwd,
-      prompt: buildThreadTitlePrompt(input.message),
+      prompt: buildThreadTitlePrompt(input.message, input.includeBranch),
       timeoutMs: TITLE_TIMEOUT_MS,
     });
     return parseGeneratedSessionTitle(output, input.message);
@@ -33,6 +34,7 @@ export function generatePiSessionTitle(input: {
   sessionId: string;
   cwd: string;
   message: string;
+  includeBranch?: boolean;
 }): Promise<GeneratedSessionTitle | null> {
   return generateSessionTitle(PI_FLAVOR, input);
 }
@@ -41,6 +43,7 @@ export function generateOmpSessionTitle(input: {
   sessionId: string;
   cwd: string;
   message: string;
+  includeBranch?: boolean;
 }): Promise<GeneratedSessionTitle | null> {
   return generateSessionTitle(OMP_FLAVOR, input);
 }

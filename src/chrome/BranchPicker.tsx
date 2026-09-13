@@ -262,7 +262,7 @@ export function BranchPicker({
   const interactive = enabled && !awaitingBranch && !missingGit;
 
   return (
-    <div className="flex max-w-[45%] shrink-0 items-center gap-2.5">
+    <div className="flex min-w-0 max-w-[45%] items-center gap-2.5">
       <div ref={root} className="relative min-w-0">
         <button
           type="button"
@@ -288,8 +288,8 @@ export function BranchPicker({
           }}
           className={
             missingGit
-              ? "flex min-w-0 cursor-default items-center gap-1.5 text-content/50"
-              : `flex min-w-0 items-center gap-1.5 ${
+              ? "flex min-w-0 max-w-full cursor-default items-center gap-1.5 text-content/50"
+              : `flex min-w-0 max-w-full items-center gap-1.5 ${
                   open ? "text-content" : "text-content/50 hover:text-content"
                 } disabled:opacity-40 disabled:hover:text-content/50`
           }

@@ -3,6 +3,7 @@ import type { Session } from "./session";
 import type { WorkspaceTab } from "./layout";
 import type { ProjectTerminalDock } from "./projectTerminal";
 import { rebasePath } from "./paths";
+import { finishWorktreeNaming, type WorktreeNaming } from "./worktreeNaming";
 
 export type WorktreeSettings = {
   isolateByDefault: boolean;
@@ -164,6 +165,7 @@ export function shouldIsolateSession(session: Session): boolean {
 export async function prepareSessionWorktree(
   session: Session,
   name = session.title,
+  naming?: WorktreeNaming,
 ): Promise<string | null> {
   if (session.inboxAsk || session.cwd === "~") return null;
   const path = await invoke<string | null>("worktree_prepare", {
@@ -180,9 +182,16 @@ export async function prepareSessionWorktree(
         ? session.workspaceChoice.mode === "worktree"
         : null,
       baseRef: session.workspaceChoice?.baseRef ?? null,
+      ...(naming ? { autoNameToken: naming.token } : {}),
     },
   });
-  if (path) await setupWorktree(path);
+  if (path) {
+    const setup = setupWorktree(path);
+    if (naming) {
+      void finishWorktreeNaming(session.id, naming, setup);
+    }
+    await setup;
+  }
   return path;
 }
 

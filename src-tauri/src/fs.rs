@@ -426,10 +426,13 @@ pub async fn git_commit(cwd: String, message: String) -> Result<(), String> {
 
 /// Push the current branch to its upstream, or set upstream on first push.
 #[tauri::command]
-pub async fn git_push(cwd: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || git_push_for(&expand_home(&cwd)))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_push(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
+        git_push_for(&expand_home(&cwd))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Fast-forward the current branch from its upstream.
@@ -444,10 +447,13 @@ pub async fn git_pull(cwd: String) -> Result<(), String> {
 
 /// Pull incoming commits, then push local commits.
 #[tauri::command]
-pub async fn git_sync(cwd: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || git_sync_changes_for(&expand_home(&cwd)))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_sync(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
+        git_sync_changes_for(&expand_home(&cwd))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -496,6 +502,7 @@ struct GitPrCreateInput {
 /// Create a GitHub pull request with `gh` and return its URL.
 #[tauri::command]
 pub async fn git_pr_create(
+    app: tauri::AppHandle,
     cwd: String,
     title: String,
     body: String,
@@ -503,6 +510,7 @@ pub async fn git_pr_create(
     head: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
         git_pr_create_for(
             &expand_home(&cwd),
             &GitPrCreateInput {
@@ -814,11 +822,13 @@ pub async fn git_branches(cwd: String) -> Result<GitBranches, String> {
 /// Switch to an existing local branch, or create a local tracking branch from a remote.
 #[tauri::command]
 pub async fn git_checkout(
+    app: tauri::AppHandle,
     cwd: String,
     name: String,
     remote: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
         git_checkout_for(&expand_home(&cwd), &name, remote.as_deref())
     })
     .await
@@ -827,10 +837,17 @@ pub async fn git_checkout(
 
 /// Create a branch from HEAD and switch to it.
 #[tauri::command]
-pub async fn git_create_branch(cwd: String, name: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || git_create_branch_for(&expand_home(&cwd), &name))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_create_branch(
+    app: tauri::AppHandle,
+    cwd: String,
+    name: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
+        git_create_branch_for(&expand_home(&cwd), &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Stash tracked and untracked local changes so a checkout can proceed.

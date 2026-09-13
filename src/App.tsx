@@ -5,8 +5,14 @@ import {
   heartbeatWorktrees,
   prepareSessionWorktree,
   protectedWorktreePaths,
+  shouldIsolateSession,
   type WorktreeRetirementPlan,
 } from "./lib/worktrees";
+import {
+  initialMessageContext,
+  initialSessionMetadata,
+} from "./lib/initialSessionMetadata";
+import { getHarness } from "./lib/harness/registry";
 import {
   archiveSessionsWithRetirement,
   resumeArchivedWorktreeSession,
@@ -153,7 +159,6 @@ import {
   canSteerHarness,
   compactHarnessContext,
   forgetHarnessSession,
-  generateHarnessTitle,
   isLiveHarness,
   probeHarnessAvailability,
   refreshHarnessCatalogs,
@@ -803,6 +808,9 @@ export default function App({
     canForward: false,
   });
   const turnGen = useRef(new Map<string, number>());
+  // Naming belongs to the checkout's first request, not its currently running
+  // turn. A normal follow-up must not invalidate a still-pending suggestion.
+  const cancelledWorktreeNames = useRef(new Set<string>());
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
   const lastPersistedUserBlock = useRef(new Map<string, string>());
@@ -857,6 +865,7 @@ export default function App({
       const open = sessionsRef.current.find(
         (session) => session.id === sessionId,
       );
+      if (open) cancelledWorktreeNames.current.add(sessionId);
       if (!open?.busy) return open;
 
       turnGen.current.set(sessionId, (turnGen.current.get(sessionId) ?? 0) + 1);
@@ -3801,6 +3810,7 @@ export default function App({
       const projectSessionIds = new Set(
         projectSessions.map((session) => session.id),
       );
+      for (const id of projectSessionIds) cancelledWorktreeNames.current.add(id);
 
       if (options.purgeData) {
         for (const session of projectSessions) {
@@ -4378,14 +4388,45 @@ export default function App({
         }),
       );
 
-      if (isFirstTurn && live && placeholderTitle) {
-        const titleMessage =
-          harnessText || attachments.map((file) => file.name).join(", ");
-        void generateHarnessTitle(current.harness, {
+      const nameNewWorktree =
+        isFirstTurn &&
+        live &&
+        shouldIsolateSession(current) &&
+        !current.workspaceChoice?.path;
+      const titleMessage = initialMessageContext({
+        message: [harnessText, current.inboxCard?.prompt]
+          .filter(Boolean)
+          .join("\n\n"),
+        plan: intent === "build" ? approvedPlan?.text : undefined,
+        handoff: handoffCard?.brief ?? queuedHandoff?.text,
+        attachmentNames: attachments.map((file) => file.name),
+      });
+      const requestMetadata = () =>
+        initialSessionMetadata(current.harness, {
           sessionId,
           cwd: workCwd,
           message: titleMessage,
-        })
+          includeBranch: nameNewWorktree,
+        });
+      const metadata =
+        isFirstTurn && live && (placeholderTitle || nameNewWorktree)
+          ? requestMetadata()
+          : Promise.resolve(null);
+      const naming = nameNewWorktree
+        ? {
+            token: crypto.randomUUID(),
+            result: metadata.then((generated) => generated?.branch || null),
+            retry: getHarness(current.harness)?.generateTitle
+              ? async () => (await requestMetadata())?.branch || null
+              : undefined,
+            isCurrent: () =>
+              !cancelledWorktreeNames.current.has(sessionId) &&
+              sessionsRef.current.some((session) => session.id === sessionId) &&
+              !removingSessionIds.current.has(sessionId),
+          }
+        : undefined;
+      if (isFirstTurn && live && placeholderTitle) {
+        void metadata
           .then(async (generated) => {
             const linkedWorkItem = await resolveLinkedWorkItem(
               titleMessage,
@@ -4398,7 +4439,7 @@ export default function App({
                 if (s.id !== sessionId) return s;
                 let next = s;
                 if (
-                  generated &&
+                  generated?.title &&
                   canReplaceSessionTitle(s.title, s.harness, titleSeed)
                 ) {
                   next = {
@@ -4533,6 +4574,7 @@ export default function App({
               worktreeCwd = await prepareSessionWorktree(
                 current,
                 submittedText,
+                naming,
               );
             } finally {
               showWorktreePreparation(false);
@@ -5135,6 +5177,7 @@ export default function App({
 
   const onStop = useCallback(
     (sessionId: string) => {
+      cancelledWorktreeNames.current.add(sessionId);
       const session = sessionsRef.current.find((s) => s.id === sessionId);
       turnGen.current.set(sessionId, (turnGen.current.get(sessionId) ?? 0) + 1);
       flushHarnessEvents();
@@ -5802,6 +5845,29 @@ export default function App({
 
   useEffect(() => {
     const unlisten: Array<Promise<() => void>> = [
+      listen<{
+        id: string;
+        sessionIds: string[];
+        path: string;
+        branch: string;
+      }>("worktree-named", ({ payload }) => {
+        const update = (session: Session) =>
+          session.id === payload.id ||
+          payload.sessionIds.includes(session.id) ||
+          isEqualOrInside(sessionWorkCwd(session), payload.path)
+            ? { ...session, branch: payload.branch }
+            : session;
+        sessionsRef.current = sessionsRef.current.map(update);
+        setSessions((previous) => previous.map(update));
+        setHistory((previous) =>
+          previous.map((session) =>
+            session.id === payload.id || payload.sessionIds.includes(session.id)
+              ? { ...session, branch: payload.branch }
+              : session,
+          ),
+        );
+        notifyGitChanged();
+      }),
       listen("new_tab", () => run("new", actions.current.onNew)),
       listen("close_other_tabs", () =>
         run("close-others", actions.current.onCloseOtherTabs),

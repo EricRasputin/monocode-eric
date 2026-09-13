@@ -717,12 +717,36 @@ fn upsert_session(conn: &Connection, session: &SessionUpsert) -> rusqlite::Resul
     let git = crate::fs::git_info_for(&crate::fs::expand_home(
         session.worktree_cwd.as_deref().unwrap_or(&session.cwd),
     ));
-    let branch = session
+    let supplied_branch = session
         .branch
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| git.branch.as_deref().filter(|value| !value.is_empty()));
+        .filter(|value| !value.is_empty());
+    // A delayed save from another window must not reinstate the temporary
+    // branch after native naming. The journal also covers a retired checkout.
+    let named_branch: Option<String> = conn
+        .query_row(
+            "SELECT managed.branch FROM managed_worktrees managed
+         JOIN worktree_naming naming ON naming.worktree_id = managed.id
+         WHERE naming.state = 'done' AND
+           (managed.id = ?1 OR COALESCE(?2, ?3) = managed.path OR
+            substr(COALESCE(?2, ?3), 1, length(managed.path) + 1) = managed.path || '/')
+         LIMIT 1",
+            params![session.id, session.worktree_cwd, session.cwd],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let observed_branch = git.branch.as_deref().filter(|value| !value.is_empty());
+    let branch = if named_branch.is_some() {
+        // Before first checkout persistence, cwd can still be the primary repo.
+        if session.worktree_cwd.is_some() {
+            observed_branch.or(named_branch.as_deref())
+        } else {
+            named_branch.as_deref()
+        }
+    } else {
+        supplied_branch.or(observed_branch)
+    };
     let worktree_cwd = session
         .worktree_cwd
         .as_deref()
@@ -1500,6 +1524,28 @@ mod tests {
         assert!(second.updated_at > first.updated_at);
         assert_eq!(second.title, "Updated");
         assert_eq!(second.provider_session_id.as_deref(), Some("acp-session-2"));
+    }
+
+    #[test]
+    fn stale_session_save_cannot_restore_a_temporary_worktree_branch() {
+        let store = SessionStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().unwrap();
+        let path = "/nonexistent/monocode-naming-test/worktree";
+        conn.execute("INSERT INTO managed_worktrees (id, repo, common_dir, path, branch, base_ref, last_used)
+            VALUES ('owner', '/nonexistent/project', '/nonexistent/project/.git', ?1, 'monocode/semantic-name', 'main', 0)", [path]).unwrap();
+        conn.execute("INSERT INTO worktree_naming(worktree_id, token, source_branch, target_branch, state)
+            VALUES ('owner', 'request-token', 'monocode/task-abcd1234', 'monocode/semantic-name', 'done')", []).unwrap();
+        for (id, cwd) in [
+            ("owner", path.to_string()),
+            ("nested", format!("{path}/apps/web")),
+        ] {
+            let mut session = sample(id, "/nonexistent/project", "Custom title");
+            session.worktree_cwd = Some(cwd);
+            session.branch = Some("monocode/task-abcd1234".into());
+            let saved = upsert_session(&conn, &session).unwrap();
+            assert_eq!(saved.branch.as_deref(), Some("monocode/semantic-name"));
+            assert_eq!(saved.title, "Custom title");
+        }
     }
 
     #[test]

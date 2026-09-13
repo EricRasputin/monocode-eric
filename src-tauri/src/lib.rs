@@ -269,6 +269,8 @@ pub fn run() {
             worktrees::worktree_storage_limit_set,
             worktrees::worktree_create,
             worktrees::worktree_prepare,
+            worktrees::naming::worktree_name,
+            worktrees::naming::worktree_name_status,
             worktrees::setup::worktree_setup,
             worktrees::worktree_heartbeat,
             worktrees::worktree_pin,
