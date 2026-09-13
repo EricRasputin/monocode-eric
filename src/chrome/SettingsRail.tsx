@@ -3,7 +3,7 @@ import {
   ArrowLeft,
   Bot,
   Inbox,
-  GitBranch,
+  Worktree,
   Keyboard,
   Palette,
   SlidersHorizontal,
@@ -20,7 +20,7 @@ const SECTION_ICONS: Record<SettingsSectionId, IconComponent> = {
   providers: Bot,
   inbox: Inbox,
   skills: Sparkles,
-  worktrees: GitBranch,
+  worktrees: Worktree,
   archive: Archive,
 };
 

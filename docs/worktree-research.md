@@ -2,6 +2,14 @@
 
 Reviewed 2026-09-13 for the Monocode fork. This is an implementation design input, not a claim that every recommendation below is already implemented. Findings come from official documentation and source; links to code are pinned to the reviewed commits.
 
+## Worktree and branch icons
+
+Reviewed on 13 September 2026. T3 Code uses `FolderGit2Icon` for a new worktree and `FolderGitIcon` for an existing checkout, while its adjacent branch control uses a branch glyph. [Workspace selector](https://github.com/pingdotgg/t3code/blob/20363c32c9bfdbf49c2716ef11d1f18483fcc01b/apps/web/src/components/BranchToolbarEnvModeSelector.tsx)
+
+Superset's workspace sidebar also distinguishes worktrees with `LuFolderGit2`; its newer dashboard has a different status/host-based icon treatment. [Workspace sidebar icon](https://github.com/superset-sh/superset/blob/c3c6717bb7de1ce91dbf82505e9dce12c2c0324e/apps/desktop/src/renderer/screens/main/components/WorkspaceSidebar/WorkspaceListItem/WorkspaceIcon.tsx), [dashboard icon](https://github.com/superset-sh/superset/blob/c3c6717bb7de1ce91dbf82505e9dce12c2c0324e/apps/desktop/src/renderer/routes/_authenticated/_dashboard/components/DashboardSidebar/components/DashboardSidebarWorkspaceItem/components/DashboardSidebarWorkspaceIcon/DashboardSidebarWorkspaceIcon.tsx)
+
+Monocode adopts the folder-with-Git convention using `FolderGitTwoIcon` from its existing Hugeicons set, exported as `Worktree`. Use it for worktree selection, Settings navigation, inventory rows and retirement reviews. Keep the plain branch glyph for branch names and base-ref selection, and the ordinary folder for the current checkout option.
+
 ## Findings
 
 ### T3 Code

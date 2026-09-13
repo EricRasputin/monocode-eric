@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:worktrees": "vite --host 127.0.0.1 --port 1422",
     "dev:stable": "vite --mode stable",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -50,6 +51,7 @@
     "react-dom": "^19.1.0",
     "react-material-icon-theme": "^1.2.0",
     "rehype-harden": "^1.1.8",
+    "sonner": "^2.0.8",
     "streamdown": "^2.5.0"
   },
   "devDependencies": {

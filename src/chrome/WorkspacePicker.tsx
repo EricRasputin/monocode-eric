@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BranchPicker } from "./BranchPicker";
 import { Popover } from "./Popover";
-import { Check, ChevronDown, Folder, GitBranch } from "./icons";
+import { Check, ChevronDown, Folder, Worktree } from "./icons";
 import type { Session, WorkspaceChoice } from "../lib/session";
 import { sessionWorkCwd } from "../lib/session";
 import { canChooseWorkspace } from "../lib/worktrees";
@@ -101,7 +101,7 @@ export function WorkspacePicker({
           className="flex items-center gap-1.5 text-[12px] text-content/65 hover:text-content disabled:cursor-default disabled:hover:text-content/65"
         >
           {newWorktree || linked ? (
-            <GitBranch className="size-3.5" />
+            <Worktree className="size-3.5" aria-hidden />
           ) : (
             <Folder className="size-3.5" />
           )}
@@ -144,7 +144,7 @@ export function WorkspacePicker({
                 select({ mode: "worktree", baseRef: choice?.baseRef })
               }
             >
-              <GitBranch className="size-4 shrink-0" />
+              <Worktree className="size-4 shrink-0" aria-hidden />
               <span className="flex-1">
                 New worktree
                 <span className="block text-[11px] text-content/45">
@@ -171,7 +171,7 @@ export function WorkspacePicker({
                     title={entry.path}
                     onClick={() => select({ mode: "local", path: entry.path })}
                   >
-                    <GitBranch className="size-3.5 shrink-0" />
+                    <Worktree className="size-3.5 shrink-0" aria-hidden />
                     <span className="min-w-0 flex-1 truncate font-mono">
                       {entry.branch ?? "Detached HEAD"}
                     </span>

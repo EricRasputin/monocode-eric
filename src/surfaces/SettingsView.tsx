@@ -125,6 +125,7 @@ import {
   looksLikeProject,
   subscribeArchivedProjects,
   type ArchivedProject,
+  type RecentProject,
 } from "../lib/recents";
 import {
   HARNESSES,
@@ -216,6 +217,7 @@ type Props = {
   /** Card to scroll to; the General page is too long to land at the top. */
   anchor?: SettingsAnchor | null;
   cwd: string;
+  recents: RecentProject[];
   sessions: SessionSummary[];
   besideRail?: boolean;
   onClose: () => void;
@@ -232,6 +234,7 @@ export function SettingsView({
   section,
   anchor = null,
   cwd,
+  recents,
   sessions,
   besideRail = false,
   onClose,
@@ -335,7 +338,8 @@ export function SettingsView({
               <WorktreeManager
                 key={cwd}
                 cwd={cwd}
-                onOpen={(entry) => onOpenWorktree(cwd, entry)}
+                recents={recents}
+                onOpen={onOpenWorktree}
               />
             ) : null}
             {section === "archive" ? (

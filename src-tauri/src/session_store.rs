@@ -168,9 +168,28 @@ pub struct SessionRecord {
     pub updated_at: i64,
 }
 
+fn managed_repository_for_session_path(
+    conn: &Connection,
+    cwd: &str,
+    worktree_cwd: Option<&str>,
+) -> Result<Option<String>, String> {
+    crate::worktrees::managed_repository_for_path(conn, worktree_cwd.unwrap_or(cwd))
+}
+
+fn managed_repository_for_session(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(session) = get_session(conn, session_id).map_err(|error| error.to_string())? else {
+        return Ok(None);
+    };
+    managed_repository_for_session_path(conn, &session.cwd, session.worktree_cwd.as_deref())
+}
+
 #[tauri::command(async)]
 pub fn session_upsert(
     store: State<'_, SessionStore>,
+    worktree_host: State<'_, crate::worktrees::WorktreeHost>,
     session: SessionUpsert,
 ) -> Result<SessionSummary, String> {
     validate_id(&session.id, "session")?;
@@ -189,7 +208,21 @@ pub fn session_upsert(
         return Err("blocks must be an array".into());
     }
 
+    let expected_repository = {
+        let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+        managed_repository_for_session_path(&conn, &session.cwd, session.worktree_cwd.as_deref())?
+    };
+    let _repository = expected_repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
+    let _lifecycle = worktree_host.operation_guard()?;
     let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+    if managed_repository_for_session_path(&conn, &session.cwd, session.worktree_cwd.as_deref())?
+        != expected_repository
+    {
+        return Err("Worktree changed while saving the conversation; retry".into());
+    }
     upsert_session(&conn, &session).map_err(|e| e.to_string())
 }
 
@@ -272,10 +305,23 @@ pub fn session_search(
 pub fn session_delete(
     app: AppHandle,
     store: State<'_, SessionStore>,
+    worktree_host: State<'_, crate::worktrees::WorktreeHost>,
     session_id: String,
 ) -> Result<(), String> {
     validate_id(&session_id, "session")?;
+    let expected_repository = {
+        let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+        managed_repository_for_session(&conn, &session_id)?
+    };
+    let _repository = expected_repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
+    let _lifecycle = worktree_host.operation_guard()?;
     let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+    if managed_repository_for_session(&conn, &session_id)? != expected_repository {
+        return Err("Conversation worktree changed while deleting it; retry".into());
+    }
     delete_session(&conn, &session_id).map_err(|e| e.to_string())?;
     drop(conn);
     let _ = app.emit(crate::reminders::CHANGED, ());
@@ -285,22 +331,48 @@ pub fn session_delete(
 #[tauri::command(async)]
 pub fn session_set_archived(
     store: State<'_, SessionStore>,
+    worktree_host: State<'_, crate::worktrees::WorktreeHost>,
     session_id: String,
     archived: bool,
 ) -> Result<(), String> {
     validate_id(&session_id, "session")?;
+    let expected_repository = {
+        let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+        managed_repository_for_session(&conn, &session_id)?
+    };
+    let _repository = expected_repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
+    let _lifecycle = worktree_host.operation_guard()?;
     let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+    if managed_repository_for_session(&conn, &session_id)? != expected_repository {
+        return Err("Conversation worktree changed while archiving it; retry".into());
+    }
     set_archived(&conn, &session_id, archived).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 pub fn session_set_pinned(
     store: State<'_, SessionStore>,
+    worktree_host: State<'_, crate::worktrees::WorktreeHost>,
     session_id: String,
     pinned: bool,
 ) -> Result<(), String> {
     validate_id(&session_id, "session")?;
+    let expected_repository = {
+        let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+        managed_repository_for_session(&conn, &session_id)?
+    };
+    let _repository = expected_repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
+    let _lifecycle = worktree_host.operation_guard()?;
     let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+    if managed_repository_for_session(&conn, &session_id)? != expected_repository {
+        return Err("Conversation worktree changed while pinning it; retry".into());
+    }
     set_pinned(&conn, &session_id, pinned).map_err(|e| e.to_string())
 }
 
@@ -1120,19 +1192,26 @@ fn delete_session(conn: &Connection, session_id: &str) -> rusqlite::Result<()> {
 }
 
 fn set_archived(conn: &Connection, session_id: &str, archived: bool) -> rusqlite::Result<()> {
-    touch_session_worktree(conn, session_id)?;
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let changed = tx.execute(
         "UPDATE sessions SET archived = ?1 WHERE id = ?2",
         params![if archived { 1 } else { 0 }, session_id],
     )?;
-    Ok(())
+    if changed != 1 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    touch_session_worktree(&tx, session_id)?;
+    tx.commit()
 }
 
 fn set_pinned(conn: &Connection, session_id: &str, pinned: bool) -> rusqlite::Result<()> {
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE sessions SET pinned = ?1 WHERE id = ?2",
         params![if pinned { 1 } else { 0 }, session_id],
     )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
     Ok(())
 }
 
@@ -2064,5 +2143,29 @@ mod tests {
             .unwrap();
         delete_session(&conn, "shared").unwrap();
         assert!(touched() > 0);
+    }
+
+    #[test]
+    fn archiving_a_missing_session_fails_without_touching_worktree_retention() {
+        let store = SessionStore::open_in_memory().unwrap();
+        let conn = store.lock_conn().unwrap();
+        conn.execute(
+            "INSERT INTO managed_worktrees
+               (id, repo, common_dir, path, branch, base_ref, last_used)
+             VALUES ('missing-session', '/repo', '/repo/.git', '/managed/checkout',
+                     'monocode/missing', 'main', 42)",
+            [],
+        )
+        .unwrap();
+        assert!(set_archived(&conn, "missing-session", true).is_err());
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT last_used FROM managed_worktrees WHERE id = 'missing-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap(),
+            42
+        );
     }
 }

@@ -135,6 +135,15 @@ pub fn pty_spawn(
     rows: u16,
 ) -> Result<(), String> {
     let worktree_host = app.state::<crate::worktrees::WorktreeHost>();
+    let repository = {
+        let session_store = app.state::<crate::session_store::SessionStore>();
+        let conn = session_store.lock_conn()?;
+        crate::worktrees::managed_repository_for_path(&conn, &cwd)?
+    };
+    let _repository_guard = repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
     let _worktree_guard = worktree_host.operation_guard()?;
 
     if !expand_home(&cwd).is_dir() {

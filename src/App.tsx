@@ -6,7 +6,15 @@ import {
   prepareSessionWorktree,
   protectedWorktreePaths,
   type WorktreeEntry,
+  type WorktreeRetirementPlan,
 } from "./lib/worktrees";
+import {
+  archiveSessionsWithRetirement,
+  resumeArchivedWorktreeSession,
+} from "./lib/worktreeRetirement";
+import { WorktreeRetirementDialog } from "./chrome/WorktreeRetirementDialog";
+import { AppToaster } from "./chrome/AppToaster";
+import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -677,6 +685,9 @@ export default function App({
     () => true,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [archiveRetirementPlans, setArchiveRetirementPlans] = useState<
+    WorktreeRetirementPlan[]
+  >([]);
   const [updateNotice, setUpdateNotice] = useState(installedUpdate);
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] =
@@ -1433,7 +1444,8 @@ export default function App({
   const activateTab = useCallback((id: string, paneId?: string) => {
     const tab = tabsRef.current.find((entry) => entry.id === id);
     const nextFocusedId =
-      tab && paneId &&
+      tab &&
+      paneId &&
       (leafIds(tab.layout).includes(paneId) ||
         tab.editorPanes.some((entry) => entry.id === paneId) ||
         (tab.terminalPanes ?? []).some((entry) => entry.id === paneId))
@@ -1542,8 +1554,8 @@ export default function App({
 
   const onOpenWorktree = useCallback(
     async (cwd: string, entry: WorktreeEntry) => {
-      const existing = sessionsRef.current.find(
-        (session) => sameProjectPath(sessionWorkCwd(session), entry.path),
+      const existing = sessionsRef.current.find((session) =>
+        sameProjectPath(sessionWorkCwd(session), entry.path),
       );
       const tab =
         existing &&
@@ -1552,14 +1564,29 @@ export default function App({
         );
       if (tab && existing) {
         // Restore even when a draft already points at this checkout.
-        const preparedPath = await prepareSessionWorktree({ ...existing, worktreeCwd: entry.path });
-        setSessions((previous) => previous.map((session) => session.id === existing.id
-          ? { ...session, worktreeCwd: preparedPath ?? entry.path, workspaceChoice: undefined }
-          : session));
-        setTabs((previous) => previous.map((candidate) => candidate.id === tab.id
-          ? { ...candidate, focusedId: existing.id, diffFocused: false }
-          : candidate));
-        activateTab(tab.id);
+        const preparedPath = await prepareSessionWorktree({
+          ...existing,
+          worktreeCwd: entry.path,
+        });
+        setSessions((previous) =>
+          previous.map((session) =>
+            session.id === existing.id
+              ? {
+                  ...session,
+                  worktreeCwd: preparedPath ?? entry.path,
+                  workspaceChoice: undefined,
+                }
+              : session,
+          ),
+        );
+        setTabs((previous) =>
+          previous.map((candidate) =>
+            candidate.id === tab.id
+              ? { ...candidate, focusedId: existing.id, diffFocused: false }
+              : candidate,
+          ),
+        );
+        activateTab(tab.id, existing.id);
         setComposerFocused(true);
         setSettingsOpen(false);
         return;
@@ -1572,6 +1599,7 @@ export default function App({
       setSessions((previous) => [...previous, next]);
       appendTab(nextTab, cwd);
       setProjectCwd(cwd);
+      setRecents(rememberProject(cwd));
       setActiveTabId(nextTab.id);
       setComposerFocused(true);
       setSettingsOpen(false);
@@ -2810,23 +2838,46 @@ export default function App({
       const open = sessionsRef.current.find(
         (session) => session.id === sessionId,
       );
-      if (open) return open;
-
-      const loaded = await getSession(sessionId).catch(() => null);
+      if (open && !shouldPersistSession(open)) return open;
+      let loaded = open ?? (await getSession(sessionId).catch(() => null));
       if (!loaded) {
         void refreshHistory(sidebarCwd);
         return null;
       }
-      if (loaded.worktreeCwd) {
-        try {
-          await prepareSessionWorktree(loaded);
-        } catch (error) {
-          void message(`Could not restore this worktree.\n\n${String(error)}`, {
+      const restoringToast = loaded.worktreeCwd
+        ? toast.loading("Opening worktree…", {
+            description:
+              "Preparing this conversation’s working folder.",
+          })
+        : null;
+      try {
+        loaded = await resumeArchivedWorktreeSession(loaded);
+      } catch (error) {
+        void message(
+          `Could not reopen this conversation.\n\n${String(error)}`,
+          {
             title: "MonoCode",
             kind: "error",
-          });
-          return null;
-        }
+          },
+        );
+        return null;
+      } finally {
+        if (restoringToast != null) toast.dismiss(restoringToast);
+      }
+      setHistory((current) =>
+        current.map((entry) =>
+          entry.id === sessionId ? { ...entry, archived: false } : entry,
+        ),
+      );
+      if (open) {
+        const next = sessionsRef.current.map((entry) =>
+          entry.id === sessionId && entry.worktreeCwd
+            ? { ...entry, branch: undefined }
+            : entry,
+        );
+        sessionsRef.current = next;
+        setSessions(next);
+        return next.find((entry) => entry.id === sessionId) ?? loaded;
       }
       const restored = restoreSessionCheckout(loaded);
       if (restored.providerSessionId && isLiveHarness(restored.harness)) {
@@ -3035,12 +3086,12 @@ export default function App({
   const onSelectHistorySession = useCallback(
     async (sessionId: string) => {
       const linkedUpdate = linkedSessionUpdatesRef.current.get(sessionId);
+      const session = await ensureOpenSession(sessionId);
+      if (!session || session.inboxAsk) return;
       if (focusOpenSession(sessionId)) {
         if (linkedUpdate) revealLinkedSessionUpdate(sessionId, linkedUpdate);
         return;
       }
-      const session = await ensureOpenSession(sessionId);
-      if (!session || session.inboxAsk) return;
       if (replaceBlankPaneWithSession(session)) {
         if (linkedUpdate) revealLinkedSessionUpdate(sessionId, linkedUpdate);
         return;
@@ -3097,7 +3148,9 @@ export default function App({
   const sessionReminders = useSessionReminders(
     openReminderSession,
     ensureReminderSessionsSaved,
-    sessions.filter((session) => !session.inboxAsk).map((session) => session.id),
+    sessions
+      .filter((session) => !session.inboxAsk)
+      .map((session) => session.id),
   );
 
   const onPlaceSessionOnPane = useCallback(
@@ -3296,8 +3349,15 @@ export default function App({
             });
             sessionsRef.current = removal.sessions;
             tabsRef.current = removal.tabs;
-            void heartbeatWorktrees(protectedWorktreePaths(removal.sessions, removal.tabs, projectTerminalsRef.current))
-              .then(() => refreshWorktrees(seed?.cwd ?? sidebarCwd)).catch(() => undefined);
+            void heartbeatWorktrees(
+              protectedWorktreePaths(
+                removal.sessions,
+                removal.tabs,
+                projectTerminalsRef.current,
+              ),
+            )
+              .then(() => refreshWorktrees(seed?.cwd ?? sidebarCwd))
+              .catch(() => undefined);
             setSessions(removal.sessions);
             setTabs(removal.tabs);
             if (removal.activeTabId !== activeTabIdRef.current) {
@@ -3350,9 +3410,50 @@ export default function App({
     ],
   );
 
+  const archiveAndReviewWorktrees = useCallback(
+    (sessionIds: readonly string[]) =>
+      archiveSessionsWithRetirement({
+        sessionIds,
+        archive: (sessionId) => onRemoveHistorySession(sessionId, "archive"),
+        protectedPaths: () =>
+          protectedWorktreePaths(
+            sessionsRef.current,
+            tabsRef.current,
+            projectTerminalsRef.current,
+          ),
+        onReview: (plan) => {
+          if (plan.entries.length > 0) {
+            setArchiveRetirementPlans((current) => [...current, plan]);
+          } else if (plan.kept.length > 0) {
+            toast(
+              sessionIds.length === 1
+                ? "Session archived"
+                : "Sessions archived",
+              {
+                description:
+                  plan.kept.length === 1
+                    ? `Worktree kept: ${plan.kept[0].reason}`
+                    : `${plan.kept.length} worktrees kept. Review them in Settings → Worktrees.`,
+              },
+            );
+          }
+        },
+        onReviewError: () => {
+          toast(
+            sessionIds.length === 1 ? "Session archived" : "Sessions archived",
+            {
+              description:
+                "Cleanup could not be checked. Review it later in Settings → Worktrees.",
+            },
+          );
+        },
+      }),
+    [onRemoveHistorySession],
+  );
+
   const onArchiveHistorySession = useCallback(
     async (sessionId: string, archived: boolean) => {
-      if (archived) return onRemoveHistorySession(sessionId, "archive");
+      if (archived) return archiveAndReviewWorktrees([sessionId]);
       if (removingSessionIds.current.has(sessionId)) return false;
       try {
         await setSessionArchived(sessionId, false);
@@ -3373,7 +3474,7 @@ export default function App({
         return false;
       }
     },
-    [onRemoveHistorySession],
+    [archiveAndReviewWorktrees],
   );
 
   const onArchiveFocusedSession = useCallback(
@@ -3391,6 +3492,7 @@ export default function App({
             notesViewOpenRef.current ||
             settingsOpenRef.current ||
             filePickerOpenRef.current ||
+            archiveRetirementPlans.length > 0 ||
             whatsNewVersionRef.current,
           ),
         },
@@ -3399,7 +3501,7 @@ export default function App({
         },
       );
     },
-    [onArchiveHistorySession],
+    [onArchiveHistorySession, archiveRetirementPlans.length],
   );
 
   const onPinHistorySession = useCallback(
@@ -3428,11 +3530,15 @@ export default function App({
 
   const onArchiveHistorySessions = useCallback(
     async (sessionIds: readonly string[], archived: boolean) => {
+      if (archived) {
+        await archiveAndReviewWorktrees(sessionIds);
+        return;
+      }
       for (const sessionId of sessionIds) {
         if (!(await onArchiveHistorySession(sessionId, archived))) break;
       }
     },
-    [onArchiveHistorySession],
+    [archiveAndReviewWorktrees, onArchiveHistorySession],
   );
 
   const onPinHistorySessions = useCallback(
@@ -3562,14 +3668,22 @@ export default function App({
     [appendTab, projectOfTab],
   );
 
-  const onWorkspaceChange = useCallback((sessionId: string, workspaceChoice: WorkspaceChoice) => {
-    const current = sessionsRef.current.find((session) => session.id === sessionId);
-    if (!current || current.busy || !canChooseWorkspace(current)) return;
-    const next = sessionsRef.current.map((session) => session.id === sessionId
-      ? { ...session, workspaceChoice, branch: undefined } : session);
-    sessionsRef.current = next;
-    setSessions(next);
-  }, []);
+  const onWorkspaceChange = useCallback(
+    (sessionId: string, workspaceChoice: WorkspaceChoice) => {
+      const current = sessionsRef.current.find(
+        (session) => session.id === sessionId,
+      );
+      if (!current || current.busy || !canChooseWorkspace(current)) return;
+      const next = sessionsRef.current.map((session) =>
+        session.id === sessionId
+          ? { ...session, workspaceChoice, branch: undefined }
+          : session,
+      );
+      sessionsRef.current = next;
+      setSessions(next);
+    },
+    [],
+  );
 
   const onBranchChange = useCallback(
     (sessionId: string) => {
@@ -4378,18 +4492,67 @@ export default function App({
         };
 
         let buildSucceeded = false;
+        const worktreeStatusId =
+          canChooseWorkspace(current) &&
+          current.workspaceChoice?.mode !== "local"
+            ? crypto.randomUUID()
+            : null;
+        const showWorktreePreparation = (show: boolean) => {
+          if (!worktreeStatusId) return;
+          const withoutStatus = (session: Session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  blocks: session.blocks.filter(
+                    (block) => block.id !== worktreeStatusId,
+                  ),
+                }
+              : session;
+          if (!show) {
+            sessionsRef.current = sessionsRef.current.map(withoutStatus);
+            setSessions((previous) => previous.map(withoutStatus));
+            return;
+          }
+          setSessions((previous) =>
+            previous.map((session) => {
+              if (session.id !== sessionId) return session;
+              return {
+                ...session,
+                blocks: [
+                  ...session.blocks,
+                  {
+                    id: worktreeStatusId,
+                    role: "system",
+                    text: "Preparing worktree…",
+                  },
+                ],
+              };
+            }),
+          );
+        };
         try {
           if (!current.inboxAsk) {
-            const worktreeCwd = await prepareSessionWorktree(
-              current,
-              submittedText,
-            );
+            showWorktreePreparation(true);
+            let worktreeCwd: string | null;
+            try {
+              worktreeCwd = await prepareSessionWorktree(
+                current,
+                submittedText,
+              );
+            } finally {
+              showWorktreePreparation(false);
+            }
             if (turnGen.current.get(sessionId) !== gen) return;
             if (worktreeCwd) {
               workCwd = worktreeCwd;
               const next = sessionsRef.current.map((session) =>
                 session.id === sessionId
-                  ? { ...session, worktreeCwd, workspaceChoice: undefined, branch: undefined }
+                  ? {
+                      ...session,
+                      worktreeCwd,
+                      workspaceChoice: undefined,
+                      branch: undefined,
+                    }
                   : session,
               );
               sessionsRef.current = next;
@@ -4401,7 +4564,20 @@ export default function App({
               if (preparedSession) await upsertSession(preparedSession);
               notifyGitChanged();
             }
+            // A restored workspace may still contain an archived conversation.
+            // Resuming work must protect it after this window's lease ends.
+            if (shouldPersistSession(current)) {
+              await setSessionArchived(sessionId, false);
+            }
+            if (turnGen.current.get(sessionId) !== gen) return;
             await beginSessionTurn(sessionId, workCwd);
+            setHistory((entries) =>
+              entries.map((entry) =>
+                entry.id === sessionId && entry.archived
+                  ? { ...entry, archived: false }
+                  : entry,
+              ),
+            );
           }
           if (turnGen.current.get(sessionId) !== gen) return;
           const prepared = await prepareAttachments(attachments);
@@ -4471,9 +4647,7 @@ export default function App({
           if (turnGen.current.get(sessionId) !== gen) return;
           if (wrap) revealHandoff(wrap.text);
           const message =
-            error instanceof Error
-              ? error.message
-              : String(error);
+            error instanceof Error ? error.message : String(error);
           if (!providerFailureSeen) {
             enqueueHarnessEvent(sessionId, {
               type: "session.error",
@@ -5064,7 +5238,8 @@ export default function App({
   const onQuestionInteraction = useCallback(
     (sessionId: string, requestId: number) => {
       const session = sessionsRef.current.find((s) => s.id === sessionId);
-      if (session) keepHarnessQuestionOpen(session.harness, sessionId, requestId);
+      if (session)
+        keepHarnessQuestionOpen(session.harness, sessionId, requestId);
     },
     [],
   );
@@ -5981,7 +6156,9 @@ export default function App({
                       onSizePaint={paintDockSize}
                       onSizeCommit={commitDockSize}
                       onAddTerminal={() =>
-                        onOpenTerminal(active ? sessionWorkCwd(active) : projectCwd)
+                        onOpenTerminal(
+                          active ? sessionWorkCwd(active) : projectCwd,
+                        )
                       }
                       onSelectTerminal={onSelectProjectTerminal}
                       onCloseTerminal={onCloseProjectTerminal}
@@ -6123,6 +6300,7 @@ export default function App({
           <SettingsView
             section={settingsSection}
             onOpenWorktree={onOpenWorktree}
+            recents={recents}
             anchor={settingsAnchor}
             cwd={sidebarCwd}
             sessions={sidebarHistory}
@@ -6162,6 +6340,25 @@ export default function App({
         />
       ) : null}
 
+      {archiveRetirementPlans[0] ? (
+        <WorktreeRetirementDialog
+          key={archiveRetirementPlans[0].planId}
+          plan={archiveRetirementPlans[0]}
+          source="archive"
+          onClose={() =>
+            setArchiveRetirementPlans((current) => current.slice(1))
+          }
+          onRetired={() => {
+            for (const repo of new Set(
+              archiveRetirementPlans[0].entries.map((entry) => entry.repo),
+            )) {
+              refreshWorktrees(repo);
+            }
+            notifyGitChanged();
+          }}
+        />
+      ) : null}
+      <AppToaster />
       <ApprovalToasts
         notices={hiddenApprovalToasts}
         topOffset={

@@ -736,6 +736,47 @@ header[data-tauri-drag-region] button {
   animation: approval-toast-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.monocode-toaster[data-sonner-toaster][data-sonner-theme] {
+  --normal-bg: color-mix(
+    in srgb,
+    var(--color-background-base) 97%,
+    var(--color-content)
+  );
+  --normal-border: color-mix(in srgb, var(--color-content) 12%, transparent);
+  --normal-text: var(--color-content);
+  --border-radius: 10px;
+  font-family: var(--font-sans);
+}
+
+.monocode-toaster [data-sonner-toast][data-styled="true"] {
+  padding: 13px 36px 13px 14px;
+  box-shadow: 0 4px 16px #00000014;
+}
+
+.monocode-toaster [data-sonner-toast][data-styled="true"] [data-description] {
+  color: color-mix(in srgb, var(--color-content) 60%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.monocode-toaster [data-sonner-toast][data-styled="true"] [data-close-button] {
+  top: 11px;
+  right: 10px;
+  left: auto;
+  transform: none;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.monocode-toaster
+  [data-sonner-toast][data-styled="true"]:hover
+  [data-close-button]:hover {
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  color: var(--color-content);
+}
+
 @keyframes linked-activity-notice-in {
   from {
     transform: translateY(-8px);

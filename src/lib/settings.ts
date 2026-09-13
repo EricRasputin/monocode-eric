@@ -53,7 +53,8 @@ export const SETTINGS_SECTIONS: {
   {
     id: "worktrees",
     label: "Worktrees",
-    description: "Review unused checkouts. Branches and saved conversations stay.",
+    description:
+      "Review worktrees by project. Retire finished work when you’re ready.",
   },
   {
     id: "archive",

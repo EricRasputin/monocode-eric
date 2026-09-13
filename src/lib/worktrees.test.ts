@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  createWorktree,
   prepareSessionWorktree,
   protectedWorktreePaths,
   shouldIsolateSession,
-  suggestedWorktrees,
 } from "./worktrees";
 import { newSession, sessionWorkCwd } from "./session";
 import { newTab } from "./layout";
@@ -58,6 +58,56 @@ describe("worktree session lifecycle", () => {
         createNew: false,
       }),
     });
+  });
+
+  it("runs setup after prepare and retries setup failures on the next send", async () => {
+    const session = newSession("claude", "/repo");
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/repo/.worktrees/new")
+      .mockRejectedValueOnce(new Error("Setup command failed"));
+
+    await expect(prepareSessionWorktree(session, "Add search")).rejects.toThrow(
+      "Setup command failed",
+    );
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["worktree_prepare", { request: expect.any(Object) }],
+      ["worktree_setup", { path: "/repo/.worktrees/new" }],
+    ]);
+
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/repo/.worktrees/new")
+      .mockResolvedValueOnce(undefined);
+    await expect(prepareSessionWorktree(session, "Add search")).resolves.toBe(
+      "/repo/.worktrees/new",
+    );
+    expect(invoke).toHaveBeenNthCalledWith(3, "worktree_prepare", {
+      request: expect.any(Object),
+    });
+    expect(invoke).toHaveBeenNthCalledWith(4, "worktree_setup", {
+      path: "/repo/.worktrees/new",
+    });
+  });
+
+  it("sets up worktrees created through the direct API", async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/repo/.worktrees/manual")
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      createWorktree("/repo", "session", "Manual", " main "),
+    ).resolves.toBe("/repo/.worktrees/manual");
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      [
+        "worktree_create",
+        {
+          cwd: "/repo",
+          sessionId: "session",
+          name: "Manual",
+          baseRef: "main",
+        },
+      ],
+      ["worktree_setup", { path: "/repo/.worktrees/manual" }],
+    ]);
   });
 
   it("keeps checkout and provider identity through workspace snapshots and restore", () => {
@@ -135,38 +185,5 @@ describe("worktree session lifecycle", () => {
         hydrateWorkspaceSnapshot(snapshot, saved)!.sessions[0].workspaceChoice,
       ).toEqual(session.workspaceChoice);
     }
-  });
-
-  it("suggests only old, eligible owned checkouts", () => {
-    const now = 20 * 86400_000;
-    const entry = {
-      id: "old",
-      path: "/old",
-      branch: "old",
-      baseRef: "main",
-      main: false,
-      pinned: false,
-      missing: false,
-      lastUsed: now - 7 * 86400_000,
-      blockedReason: null,
-    };
-    const overview = {
-      repo: "/repo",
-      settings: {
-        isolateByDefault: true,
-        autoCleanup: false,
-        retentionDays: 7,
-      },
-      entries: [
-        entry,
-        { ...entry, id: "recent", lastUsed: now },
-        { ...entry, id: "dirty", blockedReason: "Contains changes" },
-        { ...entry, id: null },
-        { ...entry, id: "missing", missing: true },
-      ],
-    };
-    expect(suggestedWorktrees(overview, now).map((item) => item.id)).toEqual([
-      "old",
-    ]);
   });
 });
