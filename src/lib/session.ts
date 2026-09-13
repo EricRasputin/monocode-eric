@@ -249,6 +249,13 @@ export const RUNTIME_MODE_HINT: Record<RuntimeMode, string> = {
   "full-access": "Allow commands and edits without prompts.",
 };
 
+/** Draft choice. Once prepared, worktreeCwd permanently identifies the checkout. */
+export type WorkspaceChoice = {
+  mode: "local" | "worktree";
+  baseRef?: string;
+  path?: string;
+};
+
 export type Session = {
   /** Temporary Inbox conversation: shares the runtime, never saved as a session. */
   inboxAsk?: InboxAskContext;
@@ -278,13 +285,11 @@ export type Session = {
    * Handoff runs on the next send, not on picker change.
    */
   pendingSwitch?: PendingHarnessSwitch;
-  /**
-   * Last composer-pinned branch. Unused after session worktrees were removed;
-   * kept so older session records still load.
-   */
+  /** Last observed branch of the session checkout. */
   branch?: string;
-  /** Extra git worktree from the old session-branch feature. Unused. */
+  /** Isolated checkout; cwd remains the project identity for history/grouping. */
   worktreeCwd?: string;
+  workspaceChoice?: WorkspaceChoice;
   /** One-shot composer text when opening a session from Inbox. */
   composerSeed?: string;
   /** Inbox issue/PR chip shown above the composer. In-memory, one-shot. */
@@ -430,6 +435,7 @@ export function sessionDisplayTitle(title: string, harness: HarnessId): string {
 export function sessionWorkCwd(session: {
   cwd: string;
   worktreeCwd?: string;
+  workspaceChoice?: WorkspaceChoice;
 }): string {
-  return session.worktreeCwd || session.cwd;
+  return session.worktreeCwd || session.workspaceChoice?.path || session.cwd;
 }

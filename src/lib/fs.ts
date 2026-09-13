@@ -291,17 +291,11 @@ export function isCheckoutBlockedByChanges(message: string): boolean {
   );
 }
 
-/** Drop leftover session-worktree pins. The composer now switches this folder. */
+/** Keep checkout identity and provider continuity across history/restart. */
 export function restoreSessionCheckout<
   T extends { cwd: string; branch?: string; worktreeCwd?: string; providerSessionId?: string },
 >(session: T): T {
-  if (!session.branch && !session.worktreeCwd) return session;
-  return {
-    ...session,
-    branch: undefined,
-    worktreeCwd: undefined,
-    ...(session.worktreeCwd ? { providerSessionId: undefined } : {}),
-  };
+  return session;
 }
 
 const GIT_CHANGED = "monocode-git-changed";

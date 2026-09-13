@@ -27,13 +27,14 @@ type Props = {
   enabled?: boolean;
   onChange?: () => void;
   onClose?: () => void;
+  /** Choose a future worktree base without switching the current checkout. */
+  onSelectBase?: (reference: string) => void;
 };
 
 const MENU_WIDTH = 280;
 
 type Row =
-  | { kind: "create"; name: string }
-  | { kind: "branch"; branch: GitBranchInfo };
+  { kind: "create"; name: string } | { kind: "branch"; branch: GitBranchInfo };
 
 type PendingSwitch =
   | { kind: "create"; name: string }
@@ -48,6 +49,7 @@ export function BranchPicker({
   enabled = true,
   onChange,
   onClose,
+  onSelectBase,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -122,8 +124,7 @@ export function BranchPicker({
       (entry) => !entry.remote && entry.name === name,
     );
     const selected = branch || projectBranches?.current;
-    const create: Row[] =
-      name && !taken ? [{ kind: "create", name }] : [];
+    const create: Row[] = name && !taken ? [{ kind: "create", name }] : [];
     return [
       ...create,
       ...filtered.map((entry) => ({
@@ -197,6 +198,17 @@ export function BranchPicker({
   };
 
   const pick = (row: Row) => {
+    if (onSelectBase) {
+      onSelectBase(
+        row.kind === "create"
+          ? row.name
+          : row.branch.remote
+            ? `${row.branch.remote}/${row.branch.name}`
+            : row.branch.name,
+      );
+      dismiss(true);
+      return;
+    }
     if (row.kind === "create") {
       void run({ kind: "create", name: row.name });
       return;
@@ -260,7 +272,7 @@ export function BranchPicker({
               ? "Loading branch"
               : missingGit
                 ? "No git repository"
-                : `Branch ${label}`
+                : `${onSelectBase ? "Worktree base" : "Branch"} ${label}`
           }
           aria-expanded={missingGit ? undefined : open}
           aria-haspopup={missingGit ? undefined : "dialog"}
@@ -295,6 +307,8 @@ export function BranchPicker({
                 <span className="invisible">main</span>
                 <span className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-current opacity-50" />
               </>
+            ) : onSelectBase ? (
+              `From ${label}`
             ) : (
               label
             )}
@@ -335,7 +349,7 @@ export function BranchPicker({
             maxHeight={MENU_MAX_HEIGHT}
             onDismiss={(reason) => dismiss(reason === "escape")}
             role="dialog"
-            aria-label="Branch picker"
+            aria-label={onSelectBase ? "Worktree base picker" : "Branch picker"}
             data-branch-picker
             className="flex flex-col overflow-hidden"
           >
@@ -345,8 +359,16 @@ export function BranchPicker({
                 ref={search}
                 type="text"
                 value={query}
-                placeholder="Search or create a branch..."
-                aria-label="Search or create a branch"
+                placeholder={
+                  onSelectBase
+                    ? "Search branches or enter a ref..."
+                    : "Search or create a branch..."
+                }
+                aria-label={
+                  onSelectBase
+                    ? "Search worktree base"
+                    : "Search or create a branch"
+                }
                 spellCheck={false}
                 autoComplete="off"
                 autoCorrect="off"
@@ -362,6 +384,7 @@ export function BranchPicker({
               />
             </label>
             <BranchList
+              selectingBase={!!onSelectBase}
               rows={rows}
               active={active}
               busy={busy}
@@ -382,6 +405,7 @@ export function BranchPicker({
 }
 
 function BranchList({
+  selectingBase,
   rows,
   active,
   busy,
@@ -389,6 +413,7 @@ function BranchList({
   onActive,
   onPick,
 }: {
+  selectingBase?: boolean;
   rows: Row[];
   active: number;
   busy: boolean;
@@ -452,7 +477,9 @@ function BranchList({
               <>
                 <Plus className="size-3.5 shrink-0" strokeWidth={1.75} />
                 <span className="min-w-0 truncate text-[12px]">
-                  Create and checkout {row.name}
+                  {selectingBase
+                    ? `Use ${row.name} as base`
+                    : `Create and checkout ${row.name}`}
                 </span>
               </>
             ) : (

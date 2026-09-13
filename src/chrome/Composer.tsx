@@ -1,3 +1,5 @@
+import { WorkspacePicker } from "./WorkspacePicker";
+import type { Session, WorkspaceChoice } from "../lib/session";
 import {
   ArrowUp,
   AiIdea,
@@ -149,6 +151,8 @@ type Props = {
   executionCwd: string;
   sessionId?: string;
   branch?: string;
+  workspaceSession?: Session;
+  onWorkspaceChange?: (choice: WorkspaceChoice) => void;
   recents?: RecentProject[];
   hideProjectPicker?: boolean;
   hideBranchPicker?: boolean;
@@ -406,6 +410,8 @@ export function Composer({
   executionCwd,
   sessionId,
   branch,
+  workspaceSession,
+  onWorkspaceChange,
   recents = [],
   hideProjectPicker = false,
   hideBranchPicker = false,
@@ -1305,10 +1311,13 @@ export function Composer({
                   onClose={() => ref.current?.focus()}
                 />
               )}
-              {hideBranchPicker ? null : (
+              {hideBranchPicker ? null : workspaceSession && onWorkspaceChange ? (
+                <WorkspacePicker session={workspaceSession} enabled={enabled && !busy}
+                  onChange={onWorkspaceChange} onBranchChange={onBranchChange} onClose={() => ref.current?.focus()} />
+              ) : (
                 <BranchPicker
-                  cwd={cwd}
-                  branch={branch}
+                  cwd={executionCwd}
+                  branch={executionCwd === cwd ? branch : undefined}
                   enabled={enabled && !busy}
                   onChange={onBranchChange}
                   onClose={() => ref.current?.focus()}

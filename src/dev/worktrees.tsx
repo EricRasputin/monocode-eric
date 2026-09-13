@@ -1,0 +1,621 @@
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
+import type {
+  WorktreeEntry,
+  WorktreeOverview,
+  WorktreeRetirementPlan,
+  WorktreeRetirementReport,
+  WorktreeRetirementSelection,
+  WorktreeSettings,
+} from "../lib/worktrees";
+import {
+  RECOVERY_STORAGE_MIB,
+  type RecoveryStorageUsage,
+} from "../lib/worktreeStorage";
+import "../index.css";
+
+// A separate Vite entry: never imported by the desktop app or its release bundle.
+if (!import.meta.env.DEV) throw new Error("This preview is development-only.");
+
+const paths = [
+  "monocode-eric",
+  "Monefy",
+  "proton scribe",
+  "realm-walker-wiki",
+].map((name) => `/Users/demo/Projects/${name}`);
+const recents = paths.map((path) => ({ path, openedAt: Date.now() }));
+type Scenario = "Populated" | "Empty" | "Loading" | "Error" | "Restoration";
+type ArchiveDemo = "shared" | "final" | "bulk" | "blocker" | "partial";
+const previewParams = new URLSearchParams(location.search);
+const requestedScenario = previewParams.get("state");
+const scenario: Scenario =
+  requestedScenario === "Empty" ||
+  requestedScenario === "Loading" ||
+  requestedScenario === "Error" ||
+  requestedScenario === "Restoration"
+    ? requestedScenario
+    : "Populated";
+const day = 86_400_000;
+const entries = new Map<string, WorktreeEntry[]>();
+const projectSettings = new Map<string, WorktreeSettings>();
+function currentSettings(cwd: string): WorktreeSettings {
+  return (
+    projectSettings.get(cwd) ?? {
+      isolateByDefault: true,
+    }
+  );
+}
+const retirementPlans = new Map<string, WorktreeRetirementPlan>();
+let archiveDemo: ArchiveDemo = "final";
+let partialAttempt = 0;
+let restorationComplete = false;
+let recoveryStorageVersion = 2;
+let recoveryStorageLimit = 64 * RECOVERY_STORAGE_MIB;
+let recoveryStorageUsed = 51.2 * RECOVERY_STORAGE_MIB;
+const recoveryStorageProjects = new Map(
+  paths.map((path, index) => [
+    path,
+    (index === 0 ? 22.6 : 4 + index * 3) * RECOVERY_STORAGE_MIB,
+  ]),
+);
+
+function recoveryStorage(): RecoveryStorageUsage {
+  return {
+    usedBytes: Math.round(recoveryStorageUsed),
+    limitBytes: recoveryStorageLimit,
+    version: recoveryStorageVersion,
+    projects: [...recoveryStorageProjects].map(([projectCwd, usedBytes]) => ({
+      projectCwd,
+      usedBytes: Math.round(usedBytes),
+    })),
+  };
+}
+
+function addRecoveryStorage(projectCwd: string, bytes: number) {
+  recoveryStorageUsed += bytes;
+  recoveryStorageProjects.set(
+    projectCwd,
+    (recoveryStorageProjects.get(projectCwd) ?? 0) + bytes,
+  );
+}
+
+function seed(cwd: string): WorktreeEntry[] {
+  const entry = (
+    id: string,
+    branch: string,
+    age: number,
+    blockedReason: string | null = null,
+  ): WorktreeEntry => ({
+    id: `${cwd}:${id}`,
+    path: `${cwd}/.worktrees/${id}`,
+    branch,
+    baseRef: "main",
+    main: false,
+    pinned: false,
+    missing: false,
+    lastUsed: Date.now() - age * day,
+    blockedReason,
+  });
+  return [
+    {
+      ...entry("main", "main", 0, "Primary checkout"),
+      id: null,
+      path: cwd,
+      main: true,
+    },
+    entry("settings", "monocode/settings-polish", 12),
+    entry("keyboard", "monocode/keyboard-navigation", 9),
+    entry(
+      "composer",
+      "monocode/composer-layout",
+      1,
+      "Used by an open conversation",
+    ),
+    { ...entry("docs", "monocode/worktree-guide", 4, "Pinned"), pinned: true },
+    entry(
+      "api",
+      "monocode/provider-retries",
+      5,
+      "Contains uncommitted changes",
+    ),
+  ];
+}
+
+function currentEntries(cwd: string) {
+  if (!entries.has(cwd)) entries.set(cwd, seed(cwd));
+  return entries.get(cwd)!;
+}
+
+function retirementEntry(
+  id: string,
+  cwd: string,
+  branch: string,
+  worktreeRemoved = false,
+): WorktreeRetirementPlan["entries"][number] {
+  return {
+    id,
+    repo: cwd,
+    path: `${cwd}/.worktrees/${id.split(":").join("-")}`,
+    branch,
+    worktreeRemoved,
+    blockedReason: null,
+    localBranch: { name: branch, allowed: true, reason: null },
+    remoteBranch: {
+      name: branch,
+      remote: "origin",
+      destination: `github.com/demo/monocode.git · ${branch}`,
+      allowed: true,
+      reason: null,
+    },
+  };
+}
+
+const retirementResults = new Map<
+  string,
+  WorktreeRetirementReport["results"][number]
+>();
+
+function rememberPlan(plan: WorktreeRetirementPlan) {
+  retirementPlans.set(plan.planId, plan);
+  for (const entry of plan.entries)
+    retirementResults.delete(`${plan.planId}:${entry.id}`);
+  return plan;
+}
+
+function settingsPlan(cwd: string, ids: string[]): WorktreeRetirementPlan {
+  const byId = new Map(
+    currentEntries(cwd)
+      .filter((entry): entry is WorktreeEntry & { id: string } => !!entry.id)
+      .map((entry) => [entry.id, entry]),
+  );
+  const planned = ids.flatMap((id) => {
+    const entry = byId.get(id);
+    return entry
+      ? [
+          retirementEntry(
+            id,
+            cwd,
+            entry.branch ?? "Detached work",
+            !!entry.retirementPending,
+          ),
+        ]
+      : [];
+  });
+  return rememberPlan({
+    planId: `settings:${Date.now()}`,
+    entries: planned,
+    kept: ids
+      .filter((id) => !byId.has(id))
+      .map((id) => ({ id, path: id, reason: "No longer available" })),
+  });
+}
+
+function archivePlan(): WorktreeRetirementPlan {
+  const cwd = paths[0];
+  if (archiveDemo === "shared") {
+    return rememberPlan({ planId: "archive:shared", entries: [], kept: [] });
+  }
+  if (archiveDemo === "blocker") {
+    return rememberPlan({
+      planId: "archive:blocker",
+      entries: [],
+      kept: [
+        {
+          id: "archive-blocked",
+          path: `${cwd}/.worktrees/in-progress`,
+          reason: "Contains uncommitted changes",
+        },
+      ],
+    });
+  }
+  const ids =
+    archiveDemo === "bulk" ? ["archive-one", "archive-two"] : ["archive-final"];
+  return rememberPlan({
+    planId: `archive:${archiveDemo}`,
+    entries: ids.map((id) =>
+      retirementEntry(id, cwd, `monocode/${id.replace("archive-", "")}`),
+    ),
+    kept: [],
+  });
+}
+
+function retirementReport(
+  planId: string,
+  selections: WorktreeRetirementSelection[],
+): WorktreeRetirementReport {
+  const plan = retirementPlans.get(planId);
+  if (!plan) throw new Error("This review expired. Start a new review.");
+  let storageChanged = false;
+  const results = selections.map((selection) => {
+    const entry = plan.entries.find(
+      (candidate) => candidate.id === selection.id,
+    );
+    if (!entry)
+      throw new Error("A selected worktree is no longer in this review.");
+    const remoteFails =
+      archiveDemo === "partial" &&
+      partialAttempt === 0 &&
+      selection.deleteRemoteBranch;
+    const key = `${planId}:${selection.id}`;
+    const previous = retirementResults.get(key);
+    const result = {
+      id: selection.id,
+      path: entry.path,
+      worktreeRemoved: true,
+      localBranchDeleted:
+        !!previous?.localBranchDeleted || selection.deleteLocalBranch,
+      remoteBranchDeleted:
+        !!previous?.remoteBranchDeleted ||
+        (selection.deleteRemoteBranch && !remoteFails),
+      recoveryRef: `monocode/recovery/${selection.id.split(":").join("-")}`,
+      error: remoteFails
+        ? "The working folder was removed, but the remote server could not be reached."
+        : null,
+    };
+    retirementResults.set(key, result);
+    if (!previous?.worktreeRemoved) {
+      addRecoveryStorage(entry.repo, 2.4 * RECOVERY_STORAGE_MIB);
+      storageChanged = true;
+    }
+    for (const [cwd, list] of entries) {
+      const current = list.find((candidate) => candidate.id === selection.id);
+      if (!current) continue;
+      if (remoteFails) {
+        current.missing = true;
+        current.retirementPending = true;
+      } else {
+        entries.set(
+          cwd,
+          list.filter((candidate) => candidate.id !== selection.id),
+        );
+      }
+    }
+    return result;
+  });
+  if (storageChanged) void emit("worktree-storage-changed");
+  if (archiveDemo === "partial") partialAttempt += 1;
+  return { results };
+}
+
+mockWindows("main");
+mockIPC(
+  async (command, args) => {
+    const payload = args as {
+      cwd?: string;
+      id?: string;
+      ids?: string[];
+      pinned?: boolean;
+      sessionIds?: string[];
+      planId?: string;
+      selections?: WorktreeRetirementSelection[];
+      settings?: WorktreeSettings;
+      limitBytes?: number;
+      expectedVersion?: number;
+    };
+    const cwd = payload?.cwd ?? paths[0];
+    if (command === "git_branches") {
+      return {
+        current: "main",
+        detached: false,
+        branches: [
+          { name: "main", remote: null, current: true },
+          { name: "develop", remote: null, current: false },
+        ],
+      };
+    }
+    if (command === "worktree_list") {
+      if (scenario === "Loading")
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      if (scenario === "Error")
+        throw new Error(
+          "Could not read this repository. Check that the project folder is available.",
+        );
+      if (scenario === "Restoration") {
+        const main = currentEntries(cwd).find((entry) => entry.main)!;
+        return {
+          repo: cwd,
+          settings: currentSettings(cwd),
+          entries: [
+            main,
+            {
+              ...seed(cwd)[1],
+              id: `${cwd}:restore`,
+              path: `${cwd}/.worktrees/restorable`,
+              branch: "monocode/restorable-work",
+              missing: !restorationComplete,
+              blockedReason: restorationComplete
+                ? "Used by an open conversation"
+                : "Working folder was removed; branch is available to restore",
+            },
+          ],
+        } satisfies WorktreeOverview;
+      }
+      return {
+        repo: cwd,
+        settings: currentSettings(cwd),
+        entries:
+          scenario === "Empty"
+            ? currentEntries(cwd).filter((entry) => entry.main)
+            : currentEntries(cwd),
+      } satisfies WorktreeOverview;
+    }
+    if (command === "worktree_pin") {
+      for (const list of entries.values()) {
+        const entry = list.find((candidate) => candidate.id === payload.id);
+        if (entry) {
+          entry.pinned = !!payload.pinned;
+          entry.blockedReason = entry.pinned ? "Pinned" : null;
+        }
+      }
+      return;
+    }
+    if (command === "worktree_settings_set") {
+      const current = currentSettings(cwd);
+      if (
+        (payload.settings?.environmentVersion ?? 0) !==
+        (current.environmentVersion ?? 0)
+      ) {
+        throw new Error(
+          "WORKTREE_SETTINGS_CONFLICT: settings changed in another window",
+        );
+      }
+      const saved = {
+        ...current,
+        ...payload.settings,
+        environmentVersion: (current.environmentVersion ?? 0) + 1,
+      };
+      projectSettings.set(cwd, saved);
+      return saved;
+    }
+    if (command === "worktree_storage_get") return recoveryStorage();
+    if (command === "worktree_storage_limit_set") {
+      if (payload.expectedVersion !== recoveryStorageVersion) {
+        throw new Error(
+          "WORKTREE_STORAGE_CONFLICT: storage settings changed in another window",
+        );
+      }
+      if (
+        payload.limitBytes === undefined ||
+        payload.limitBytes < recoveryStorageUsed
+      ) {
+        throw new Error("The limit cannot be lower than current usage.");
+      }
+      recoveryStorageLimit = payload.limitBytes;
+      recoveryStorageVersion += 1;
+      void emit("worktree-storage-changed");
+      return recoveryStorage();
+    }
+    if (command === "worktree_setup") return;
+    if (command === "worktree_heartbeat") return;
+    if (command === "worktree_retirement_plan") {
+      return payload.sessionIds?.length
+        ? archivePlan()
+        : settingsPlan(cwd, payload.ids ?? []);
+    }
+    if (command === "worktree_retire") {
+      return retirementReport(payload.planId!, payload.selections ?? []);
+    }
+    // The preview has no native transport. Confirmed actions only edit fixtures.
+    return null;
+  },
+  { shouldMockEvents: true },
+);
+
+const { createRoot } = await import("react-dom/client");
+const { useEffect, useState } = await import("react");
+const { SettingsView } = await import("../surfaces/SettingsView");
+const { SettingsNav } = await import("../chrome/SettingsRail");
+const { WorkspacePicker } = await import("../chrome/WorkspacePicker");
+const { newSession } = await import("../lib/session");
+const { WorktreeRetirementDialog } =
+  await import("../chrome/WorktreeRetirementDialog");
+const { AppToaster } = await import("../chrome/AppToaster");
+const { toast } = await import("sonner");
+const { archiveSessionsWithRetirement } =
+  await import("../lib/worktreeRetirement");
+const { refreshWorktrees } = await import("../hooks/useWorktrees");
+const { rememberProject, archiveProject } = await import("../lib/recents");
+const { initAppearance, applyThemePreference, isLightScheme } =
+  await import("../lib/appearance");
+for (const path of paths) rememberProject(path);
+archiveProject("/Users/demo/Archive/monocode-eric");
+initAppearance();
+const previewTheme = previewParams.get("theme");
+if (previewTheme === "light" || previewTheme === "dark") {
+  applyThemePreference(previewTheme);
+}
+document.documentElement.classList.remove("has-native-glass");
+
+function Preview() {
+  const [section, setSection] =
+    useState<import("../lib/settings").SettingsSectionId>("worktrees");
+  const [light, setLight] = useState(isLightScheme);
+  const [composerSession, setComposerSession] = useState(() =>
+    newSession("claude", paths[0]),
+  );
+  const [notice, setNotice] = useState("");
+  const [reviewPlan, setReviewPlan] = useState<WorktreeRetirementPlan | null>(
+    null,
+  );
+  useEffect(() => {
+    if (previewParams.get("toast") !== "kept") return;
+    const id = toast("Session archived", {
+      description: "Worktree kept: Commits not merged into main",
+      // Keep the sample visible while comparing themes and spacing.
+      duration: Infinity,
+    });
+    return () => {
+      toast.dismiss(id);
+    };
+  }, []);
+
+  const runArchiveDemo = async (demo: ArchiveDemo) => {
+    archiveDemo = demo;
+    partialAttempt = 0;
+    setReviewPlan(null);
+    setNotice("Archiving…");
+    const sessionIds =
+      demo === "bulk"
+        ? ["conversation-one", "conversation-two"]
+        : [`conversation-${demo}`];
+    await archiveSessionsWithRetirement({
+      sessionIds,
+      archive: async () => {
+        setNotice(
+          sessionIds.length === 1
+            ? "Conversation archived."
+            : `${sessionIds.length} conversations archived.`,
+        );
+        return true;
+      },
+      protectedPaths: () => [],
+      onReview: (plan) => {
+        if (plan.entries.length) {
+          setReviewPlan(plan);
+        } else if (plan.kept.length) {
+          setNotice(`Archived. Worktree kept: ${plan.kept[0].reason}.`);
+          toast("Session archived", {
+            description: `Worktree kept: ${plan.kept[0].reason}`,
+          });
+        } else {
+          setNotice(
+            "Archived. The shared worktree is still in use, so there is nothing to review.",
+          );
+        }
+      },
+      onReviewError: (cause) =>
+        setNotice(`Archived. Review failed: ${String(cause)}`),
+    });
+  };
+
+  return (
+    <div className="flex h-full flex-col font-sans">
+      <div className="flex min-h-0 flex-1">
+        <aside className="sidebar-glass flex w-52 shrink-0 flex-col border-r border-content/10 pt-12">
+          <SettingsNav
+            section={section}
+            onSelect={setSection}
+            onClose={() => setSection("worktrees")}
+          />
+        </aside>
+        <SettingsView
+          section={section}
+          cwd={paths[0]}
+          recents={recents}
+          sessions={[]}
+          besideRail
+          onClose={() => setSection("worktrees")}
+          onOpenSession={() => {}}
+          onArchiveSession={() => {}}
+          onDeleteSession={() => {}}
+          onOpenWhatsNew={() => {}}
+          onOpenWorktree={async (cwd, worktreeCwd) => {
+            const entry = currentEntries(cwd).find(
+              (candidate) => candidate.path === worktreeCwd,
+            );
+            if (!entry) return;
+            if (entry.missing) {
+              restorationComplete = true;
+              setNotice(
+                `Preview: restored ${entry.branch} from its saved branch.`,
+              );
+              await refreshWorktrees(cwd);
+            } else {
+              setNotice(`Preview: open ${entry.branch}`);
+            }
+          }}
+        />
+      </div>
+
+      <footer className="shrink-0 border-t border-content/10 bg-content/3 px-4 py-2 text-[11px] text-content/50">
+        <div className="mb-2 flex items-center gap-3 border-b border-content/8 pb-2">
+          <span className="font-medium text-content/65">Composer preview</span>
+          <WorkspacePicker
+            session={composerSession}
+            enabled
+            onChange={(workspaceChoice) =>
+              setComposerSession((current) => ({ ...current, workspaceChoice }))
+            }
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-content/8 pb-2">
+          <span className="mr-1 font-medium text-content/65">Archive demo</span>
+          {(
+            [
+              ["shared", "Shared · no review"],
+              ["final", "Final conversation"],
+              ["bulk", "Bulk archive"],
+              ["blocker", "Safety blocker"],
+              ["partial", "Partial failure"],
+            ] as const
+          ).map(([demo, label]) => (
+            <button
+              key={demo}
+              className="rounded border border-content/12 px-2 py-1 hover:bg-content/10 hover:text-content"
+              onClick={() => void runArchiveDemo(demo)}
+            >
+              {label}
+            </button>
+          ))}
+          {archiveDemo === "partial" && reviewPlan ? (
+            <span className="text-content/40">
+              Select remote deletion to preview the partial result.
+            </span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pt-2">
+          <span className="mr-auto">
+            UI preview · sample data{notice ? ` · ${notice}` : ""}
+          </span>
+          {(
+            ["Populated", "Empty", "Loading", "Error", "Restoration"] as const
+          ).map((name) => (
+            <button
+              key={name}
+              aria-pressed={scenario === name}
+              className={`rounded px-2 py-1 hover:bg-content/10 ${scenario === name ? "bg-content/10 text-content" : ""}`}
+              onClick={() => {
+                const url = new URL(location.href);
+                url.searchParams.set("state", name);
+                location.assign(url);
+              }}
+            >
+              {name}
+            </button>
+          ))}
+          <button
+            className="rounded border border-content/15 px-2 py-1"
+            onClick={() => {
+              applyThemePreference(light ? "dark" : "light");
+              setLight(!light);
+            }}
+          >
+            {light ? "Dark theme" : "Light theme"}
+          </button>
+        </div>
+      </footer>
+
+      <AppToaster />
+      {reviewPlan ? (
+        <WorktreeRetirementDialog
+          plan={reviewPlan}
+          source="archive"
+          onClose={() => setReviewPlan(null)}
+          onRetired={(report) => {
+            const failures = report.results.filter(
+              (result) => result.error,
+            ).length;
+            setNotice(
+              failures
+                ? `Archived. ${failures} worktree has unfinished cleanup.`
+                : "Archived and retired. Recovery details are shown in the review.",
+            );
+            void refreshWorktrees(paths[0]);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(<Preview />);

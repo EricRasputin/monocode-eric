@@ -1,3 +1,4 @@
+import type { WorkspaceChoice } from "../lib/session";
 import { ChevronDown, GripVertical, X } from "../chrome/icons";
 import {
   memo,
@@ -71,6 +72,7 @@ type Props = {
   onClose: (sessionId: string) => void;
   onCwdChange: (sessionId: string, cwd: string) => void;
   onBranchChange: (sessionId: string) => void;
+  onWorkspaceChange?: (sessionId: string, choice: WorkspaceChoice) => void;
   onModelChange: (sessionId: string, harness: HarnessId, model: string) => void;
   onModelSettingsChange: (
     sessionId: string,
@@ -153,6 +155,7 @@ export const SessionPane = memo(function SessionPane({
   onClose,
   onCwdChange,
   onBranchChange,
+  onWorkspaceChange,
   onModelChange,
   onModelSettingsChange,
   onRuntimeModeChange,
@@ -342,6 +345,8 @@ export const SessionPane = memo(function SessionPane({
       onQuestionInteraction={(id) => onQuestionInteraction?.(session.id, id)}
       onFocus={() => onFocus(session.id)}
       onCwdChange={(cwd) => onCwdChange(session.id, cwd)}
+      workspaceSession={session}
+      onWorkspaceChange={onWorkspaceChange ? (choice) => onWorkspaceChange(session.id, choice) : undefined}
       onBranchChange={() => onBranchChange(session.id)}
       onNewTerminal={() => onNewTerminal(session.id)}
       onModelChange={(harness, model) => {

@@ -38,6 +38,7 @@ struct PtyExit {
 }
 
 struct LivePty {
+    cwd: std::path::PathBuf,
     writer: Mutex<Box<dyn Write + Send>>,
     #[cfg(unix)]
     master_fd: i32,
@@ -55,6 +56,15 @@ impl PtyHost {
         Self {
             sessions: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(crate) fn active_workdirs(&self) -> Vec<std::path::PathBuf> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(|pty| pty.cwd.clone())
+            .collect()
     }
 
     fn insert(&self, id: String, live: Arc<LivePty>) -> Option<Arc<LivePty>> {
@@ -115,7 +125,7 @@ impl Drop for PtyHost {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_spawn(
     app: AppHandle,
     host: State<PtyHost>,
@@ -124,6 +134,22 @@ pub fn pty_spawn(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    let worktree_host = app.state::<crate::worktrees::WorktreeHost>();
+    let repository = {
+        let session_store = app.state::<crate::session_store::SessionStore>();
+        let conn = session_store.lock_conn()?;
+        crate::worktrees::managed_repository_for_path(&conn, &cwd)?
+    };
+    let _repository_guard = repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
+    let _worktree_guard = worktree_host.operation_guard()?;
+
+    if !expand_home(&cwd).is_dir() {
+        return Err(format!("Working directory does not exist: {cwd}"));
+    }
+
     if let Some(prev) = host.remove(&id) {
         terminate(prev.pid);
         #[cfg(unix)]
@@ -132,17 +158,17 @@ pub fn pty_spawn(
 
     #[cfg(unix)]
     {
-        spawn_unix(app, host, id, cwd, cols.max(2), rows.max(2))
+        spawn_unix(app.clone(), host, id, cwd, cols.max(2), rows.max(2))
     }
 
     #[cfg(windows)]
     {
-        spawn_windows(app, host, id, cwd, cols.max(2), rows.max(2))
+        spawn_windows(app.clone(), host, id, cwd, cols.max(2), rows.max(2))
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (app, cwd, cols, rows);
+        let _ = (cwd, cols, rows);
         Err("Terminals are not supported on this platform.".into())
     }
 }
@@ -293,6 +319,7 @@ fn spawn_unix(
     let writer = unsafe { File::from_raw_fd(dup_fd(master)?) };
 
     let live = Arc::new(LivePty {
+        cwd: workdir.clone(),
         writer: Mutex::new(Box::new(writer)),
         master_fd: master,
         pid,
@@ -409,6 +436,7 @@ fn spawn_windows(
         .map_err(|err| format!("Failed to write to terminal: {err}"))?;
 
     let live = Arc::new(LivePty {
+        cwd: workdir.clone(),
         writer: Mutex::new(Box::new(writer)),
         master: Mutex::new(pair.master),
         pid,
@@ -809,6 +837,7 @@ mod tests {
         host.insert(
             "term".into(),
             Arc::new(LivePty {
+                cwd: std::path::PathBuf::new(),
                 writer: Mutex::new(Box::new(std::io::sink())),
                 master_fd: -1,
                 pid: 42,

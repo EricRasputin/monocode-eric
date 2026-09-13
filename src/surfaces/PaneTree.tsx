@@ -1,3 +1,4 @@
+import type { WorkspaceChoice } from "../lib/session";
 import {
   memo,
   useCallback,
@@ -58,6 +59,7 @@ type Shared = {
   onRatio: (splitId: string, index: number, ratio: number) => void;
   onCwdChange: (sessionId: string, cwd: string) => void;
   onBranchChange: (sessionId: string) => void;
+  onWorkspaceChange?: (sessionId: string, choice: WorkspaceChoice) => void;
   onModelChange: (sessionId: string, harness: HarnessId, model: string) => void;
   onModelSettingsChange: (
     sessionId: string,
@@ -162,6 +164,7 @@ function PaneTreeComponent({
   onRatio,
   onCwdChange,
   onBranchChange,
+  onWorkspaceChange,
   onModelChange,
   onModelSettingsChange,
   onRuntimeModeChange,
@@ -376,6 +379,7 @@ function PaneTreeComponent({
                 onFocus={onFocus}
                 onClose={onClose}
                 onCwdChange={onCwdChange}
+                onWorkspaceChange={onWorkspaceChange}
                 onBranchChange={onBranchChange}
                 onModelChange={onModelChange}
                 onModelSettingsChange={onModelSettingsChange}

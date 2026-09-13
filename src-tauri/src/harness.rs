@@ -66,6 +66,7 @@ pub struct CursorBinary {
 }
 
 struct LiveChild {
+    cwd: std::path::PathBuf,
     stdin: Mutex<ChildStdin>,
     pid: u32,
 }
@@ -96,6 +97,14 @@ impl HarnessHost {
             sse: Mutex::new(HashMap::new()),
             kill_all_gen: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn active_workdirs(&self) -> Vec<std::path::PathBuf> {
+        self.lock_inner()
+            .children
+            .values()
+            .map(|child| child.cwd.clone())
+            .collect()
     }
 
     fn lock_inner(&self) -> std::sync::MutexGuard<'_, HarnessInner> {
@@ -327,6 +336,17 @@ pub fn harness_spawn(
     args: Vec<String>,
     cwd: String,
 ) -> Result<u32, String> {
+    let worktree_host = app.state::<crate::worktrees::WorktreeHost>();
+    let repository = {
+        let session_store = app.state::<crate::session_store::SessionStore>();
+        let conn = session_store.lock_conn()?;
+        crate::worktrees::managed_repository_for_path(&conn, &cwd)?
+    };
+    let _repository_guard = repository
+        .as_deref()
+        .map(|common| worktree_host.repository_guard(common))
+        .transpose()?;
+    let _worktree_guard = worktree_host.operation_guard()?;
     let (epoch, kill_all, prev) = host.begin_spawn(&session_id);
     if let Some(prev) = prev {
         terminate(prev.pid);
@@ -366,6 +386,7 @@ pub fn harness_spawn(
         .ok_or_else(|| "Failed to open harness stderr".to_string())?;
 
     let live = Arc::new(LiveChild {
+        cwd: workdir,
         stdin: Mutex::new(stdin),
         pid,
     });
@@ -2035,6 +2056,7 @@ mod tests {
         let stdin = child.stdin.take().expect("test child stdin");
         (
             Arc::new(LiveChild {
+                cwd: std::path::PathBuf::new(),
                 stdin: Mutex::new(stdin),
                 pid,
             }),
@@ -2164,6 +2186,7 @@ mod tests {
         let stdin = child.stdin.take().expect("grouped child stdin");
         (
             Arc::new(LiveChild {
+                cwd: std::path::PathBuf::new(),
                 stdin: Mutex::new(stdin),
                 pid,
             }),

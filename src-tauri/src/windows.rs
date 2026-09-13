@@ -3,9 +3,10 @@ use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle, Ra
 use std::sync::OnceLock;
 use windows_sys::Win32::System::{
     JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     },
     LibraryLoader::{
         SetDefaultDllDirectories, LOAD_LIBRARY_SEARCH_APPLICATION_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
@@ -57,6 +58,53 @@ fn create_job() -> io::Result<OwnedHandle> {
     }
 }
 
+/// A setup command gets its own job so completion can prove that background
+/// descendants are gone. Closing this handle also kills the tree if MonoCode
+/// exits abruptly.
+pub(crate) struct ScopedJob {
+    handle: OwnedHandle,
+}
+
+impl ScopedJob {
+    pub(crate) fn active_processes(&self) -> io::Result<u32> {
+        unsafe {
+            let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            if QueryInformationJobObject(
+                self.handle.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                &mut accounting as *mut _ as *mut _,
+                std::mem::size_of_val(&accounting) as u32,
+                std::ptr::null_mut(),
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(accounting.ActiveProcesses)
+        }
+    }
+
+    /// Terminate any residual descendants and wait until the kernel reports
+    /// that the scoped job is empty. Errors and timeouts remain distinguishable
+    /// so callers never treat an unknown process tree as stopped.
+    pub(crate) fn terminate_and_wait(&self, timeout: std::time::Duration) -> io::Result<bool> {
+        if self.active_processes()? > 0
+            && unsafe { TerminateJobObject(self.handle.as_raw_handle(), 1) } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if self.active_processes()? == 0 {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+}
+
 /// The app owns the only job handle. OS handle cleanup kills registered trees
 /// after a crash; unrelated children are never enrolled in this job.
 pub(crate) fn assign_child(process: RawHandle) -> io::Result<()> {
@@ -94,6 +142,36 @@ pub(crate) fn spawn_managed(
         return Err(err);
     }
     Ok(child)
+}
+
+/// Spawn suspended and enroll the child before any project code can run. This
+/// uses a dedicated job rather than the global managed job so setup completion
+/// can query and terminate only this command's descendants.
+pub(crate) fn spawn_scoped_job(
+    command: &mut std::process::Command,
+) -> io::Result<(std::process::Child, ScopedJob)> {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED,
+    };
+    let job = ScopedJob {
+        handle: create_job()?,
+    };
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
+    let mut child = command.spawn()?;
+    if let Err(error) = (|| {
+        if unsafe { AssignProcessToJobObject(job.handle.as_raw_handle(), child.as_raw_handle()) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        resume_child(child.id())
+    })() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    Ok((child, job))
 }
 
 fn resume_child(pid: u32) -> io::Result<()> {

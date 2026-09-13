@@ -36,6 +36,10 @@ Linux (x86_64): download the `.deb` or AppImage from [GitHub Releases](https://g
 
 Windows (x86_64): download the NSIS installer from [GitHub Releases](https://github.com/hardbeat920/monocode/releases/latest) and run it.
 
+## Worktrees in this fork
+
+Choose **New worktree** or **Current checkout** above the message box. For a new worktree, choose the starting branch and send; Monocode creates the checkout for that conversation. **Settings → Worktrees** suggests old checkouts and asks before removal, preserving branches and saved conversations. See [the worktree guide](docs/worktrees.md).
+
 ## Some notes
 
 This is very early and you should expect bugs.

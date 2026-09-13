@@ -9,6 +9,7 @@ export type SettingsSectionId =
   | "providers"
   | "inbox"
   | "skills"
+  | "worktrees"
   | "archive";
 
 export const SETTINGS_SECTIONS: {
@@ -48,6 +49,12 @@ export const SETTINGS_SECTIONS: {
     label: "Skills",
     description:
       "Discover and manage file skills from project, personal, and harness folders.",
+  },
+  {
+    id: "worktrees",
+    label: "Worktrees",
+    description:
+      "Review worktrees by project. Retire finished work when you’re ready.",
   },
   {
     id: "archive",

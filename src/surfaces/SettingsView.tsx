@@ -1,3 +1,4 @@
+import { WorktreeManager } from "../chrome/WorktreeManager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDownCircle,
@@ -123,6 +124,7 @@ import {
   looksLikeProject,
   subscribeArchivedProjects,
   type ArchivedProject,
+  type RecentProject,
 } from "../lib/recents";
 import {
   HARNESSES,
@@ -214,6 +216,7 @@ type Props = {
   /** Card to scroll to; the General page is too long to land at the top. */
   anchor?: SettingsAnchor | null;
   cwd: string;
+  recents: RecentProject[];
   sessions: SessionSummary[];
   besideRail?: boolean;
   onClose: () => void;
@@ -223,12 +226,14 @@ type Props = {
   onRestoreProject?: (path: string) => void;
   onDeleteProject?: (path: string) => void;
   onOpenWhatsNew: (version: string) => void;
+  onOpenWorktree: (cwd: string, worktreeCwd: string) => Promise<void>;
 };
 
 export function SettingsView({
   section,
   anchor = null,
   cwd,
+  recents,
   sessions,
   besideRail = false,
   onClose,
@@ -238,6 +243,7 @@ export function SettingsView({
   onRestoreProject,
   onDeleteProject,
   onOpenWhatsNew,
+  onOpenWorktree,
 }: Props) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   useEffect(() => {
@@ -327,6 +333,14 @@ export function SettingsView({
             {section === "keybindings" ? <KeybindingsPage /> : null}
             {section === "providers" ? <ProvidersPage /> : null}
             {section === "inbox" ? <InboxPage /> : null}
+            {section === "worktrees" ? (
+              <WorktreeManager
+                key={cwd}
+                cwd={cwd}
+                recents={recents}
+                onOpen={onOpenWorktree}
+              />
+            ) : null}
             {section === "archive" ? (
               <ArchivePage
                 cwd={cwd}

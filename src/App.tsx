@@ -1,3 +1,19 @@
+import { refreshWorktrees } from "./hooks/useWorktrees";
+import type { WorkspaceChoice } from "./lib/session";
+import {
+  canChooseWorkspace,
+  heartbeatWorktrees,
+  prepareSessionWorktree,
+  protectedWorktreePaths,
+  type WorktreeRetirementPlan,
+} from "./lib/worktrees";
+import {
+  archiveSessionsWithRetirement,
+  resumeArchivedWorktreeSession,
+} from "./lib/worktreeRetirement";
+import { WorktreeRetirementDialog } from "./chrome/WorktreeRetirementDialog";
+import { AppToaster } from "./chrome/AppToaster";
+import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -644,8 +660,6 @@ export default function App({
   );
   const [projectRailOpen, setProjectRailOpen] = useState(loadProjectRailOpen);
   const tabCloseScope = "project" as const;
-  const currentProjectDock = findProjectTerminal(projectTerminals, projectCwd);
-  const dockVisible = !!currentProjectDock?.open;
   const [sidebarTab, setSidebarTab] = useState<SidebarTabId>(
     () => loadSidebarTabOrder()[0] ?? "sessions",
   );
@@ -670,6 +684,9 @@ export default function App({
     () => true,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [archiveRetirementPlans, setArchiveRetirementPlans] = useState<
+    WorktreeRetirementPlan[]
+  >([]);
   const [updateNotice, setUpdateNotice] = useState(installedUpdate);
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] =
@@ -745,6 +762,23 @@ export default function App({
   useEffect(() => {
     if (!notesEnabled) setNotesViewOpen(false);
   }, [notesEnabled]);
+
+  const worktreePathsKey = JSON.stringify(
+    protectedWorktreePaths(sessions, tabs, projectTerminals),
+  );
+  useEffect(() => {
+    const heartbeat = () =>
+      heartbeatWorktrees(
+        protectedWorktreePaths(
+          sessionsRef.current,
+          tabsRef.current,
+          projectTerminalsRef.current,
+        ),
+      ).catch(() => undefined);
+    void heartbeat();
+    const timer = window.setInterval(() => void heartbeat(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [worktreePathsKey]);
 
   const projectReturnRef = useRef<ProjectReturnMemory>(
     resumed?.projectReturnMemory ?? new Map(),
@@ -973,6 +1007,8 @@ export default function App({
     !loadedProjects.has(sidebarCwdKey) &&
     !historyFailed;
   const gitCwd = active ? sessionWorkCwd(active) : sidebarCwd;
+  const currentProjectDock = findProjectTerminal(projectTerminals, gitCwd);
+  const dockVisible = !!currentProjectDock?.open;
   const gitCwdRef = useRef(gitCwd);
   gitCwdRef.current = gitCwd;
   const projectBranches = useProjectBranches(
@@ -1005,7 +1041,7 @@ export default function App({
   }, [active?.harness]);
   const runningTerminals = useMemo(() => {
     const files: FilePaneTab[] = [];
-    const dock = findProjectTerminal(projectTerminals, projectCwd);
+    const dock = findProjectTerminal(projectTerminals, gitCwd);
     if (dock) files.push(...dock.pane.files);
     for (const tab of tabs) {
       for (const pane of tab.terminalPanes ?? []) {
@@ -1013,7 +1049,7 @@ export default function App({
       }
     }
     return listRunningTerminals(files);
-  }, [projectCwd, projectTerminals, tabs]);
+  }, [gitCwd, projectTerminals, tabs]);
   const runningTerminalOpen = useMemo(() => {
     const ids = new Set(runningTerminals.map((terminal) => terminal.id));
     if (
@@ -1407,7 +1443,8 @@ export default function App({
   const activateTab = useCallback((id: string, paneId?: string) => {
     const tab = tabsRef.current.find((entry) => entry.id === id);
     const nextFocusedId =
-      tab && paneId &&
+      tab &&
+      paneId &&
       (leafIds(tab.layout).includes(paneId) ||
         tab.editorPanes.some((entry) => entry.id === paneId) ||
         (tab.terminalPanes ?? []).some((entry) => entry.id === paneId))
@@ -1513,6 +1550,64 @@ export default function App({
     sessionDefaults?.runtimeMode,
     projectCwd,
   ]);
+
+  const onOpenWorktree = useCallback(
+    async (cwd: string, worktreeCwd: string) => {
+      const existing = sessionsRef.current.find((session) =>
+        sameProjectPath(sessionWorkCwd(session), worktreeCwd),
+      );
+      const tab =
+        existing &&
+        tabsRef.current.find((tab) =>
+          leafIds(tab.layout).includes(existing.id),
+        );
+      if (tab && existing) {
+        // Restore even when a draft already points at this checkout.
+        const preparedPath = await prepareSessionWorktree({
+          ...existing,
+          worktreeCwd,
+        });
+        setSessions((previous) =>
+          previous.map((session) =>
+            session.id === existing.id
+              ? {
+                  ...session,
+                  worktreeCwd: preparedPath ?? worktreeCwd,
+                  workspaceChoice: undefined,
+                }
+              : session,
+          ),
+        );
+        setTabs((previous) =>
+          previous.map((candidate) =>
+            candidate.id === tab.id
+              ? { ...candidate, focusedId: existing.id, diffFocused: false }
+              : candidate,
+          ),
+        );
+        activateTab(tab.id, existing.id);
+        setComposerFocused(true);
+        setSettingsOpen(false);
+        return;
+      }
+      const session = newDefaultSession(cwd);
+      const prepared = { ...session, worktreeCwd };
+      const preparedCwd = await prepareSessionWorktree(prepared);
+      const next = {
+        ...prepared,
+        worktreeCwd: preparedCwd ?? prepared.worktreeCwd,
+      };
+      const nextTab = newTab(next.id);
+      setSessions((previous) => [...previous, next]);
+      appendTab(nextTab, cwd);
+      setProjectCwd(cwd);
+      setRecents(rememberProject(cwd));
+      setActiveTabId(nextTab.id);
+      setComposerFocused(true);
+      setSettingsOpen(false);
+    },
+    [activateTab, appendTab],
+  );
 
   const onStartInboxItem = useCallback(
     async (item: InboxItem, body?: string) => {
@@ -1702,8 +1797,8 @@ export default function App({
 
   const openProjectTerminal = useCallback(
     (cwd: string) => {
-      const workdir = cwd || projectCwdRef.current;
-      const projectPath = projectCwdRef.current;
+      const workdir = cwd || gitCwdRef.current;
+      const projectPath = gitCwdRef.current;
       if (!looksLikeProject(projectPath)) return false;
       setProjectTerminals((prev) => {
         const existing = findProjectTerminal(prev, projectPath);
@@ -1726,7 +1821,7 @@ export default function App({
 
   const onOpenTerminal = useCallback(
     (cwd: string, asWorkspaceTab = false, occupySessionId?: string) => {
-      const workdir = cwd || active?.cwd || projectCwd;
+      const workdir = cwd || (active ? sessionWorkCwd(active) : projectCwd);
       if (openProjectTerminal(workdir)) return;
 
       if (asWorkspaceTab || !activeTab) {
@@ -1764,19 +1859,19 @@ export default function App({
       );
       setComposerFocused(false);
     },
-    [active?.cwd, activeTab, appendTab, openProjectTerminal, projectCwd],
+    [active, activeTab, appendTab, openProjectTerminal, projectCwd],
   );
 
   const onNewTerminal = useCallback(() => {
-    onOpenTerminal(active?.cwd ?? projectCwd);
-  }, [active?.cwd, onOpenTerminal, projectCwd]);
+    onOpenTerminal(active ? sessionWorkCwd(active) : projectCwd);
+  }, [active, onOpenTerminal, projectCwd]);
 
   const onShowProjectTerminal = useCallback(() => {
-    const dock = findProjectTerminal(projectTerminalsRef.current, projectCwd);
+    const dock = findProjectTerminal(projectTerminalsRef.current, gitCwd);
     if (dock && dock.pane.files.length > 0) {
       if (!dock.open) {
         setProjectTerminals((prev) =>
-          mapProjectTerminal(prev, projectCwd, (entry) =>
+          mapProjectTerminal(prev, gitCwd, (entry) =>
             withDockOpen(entry, true),
           ),
         );
@@ -1784,8 +1879,8 @@ export default function App({
       focusProjectTerminal();
       return;
     }
-    onOpenTerminal(active?.cwd ?? projectCwd);
-  }, [active?.cwd, focusProjectTerminal, onOpenTerminal, projectCwd]);
+    onOpenTerminal(active ? sessionWorkCwd(active) : gitCwd);
+  }, [active, focusProjectTerminal, onOpenTerminal, gitCwd]);
 
   const onNewTerminalInSession = useCallback(
     (sessionId: string) => {
@@ -1793,34 +1888,34 @@ export default function App({
         (entry) => entry.id === sessionId,
       );
       onOpenTerminal(
-        session ? sessionWorkCwd(session) : projectCwd,
+        session ? sessionWorkCwd(session) : gitCwd,
         false,
         sessionId,
       );
     },
-    [onOpenTerminal, projectCwd],
+    [onOpenTerminal, gitCwd],
   );
 
   const onToggleProjectTerminal = useCallback(() => {
-    if (!looksLikeProject(projectCwd)) return;
-    const dock = findProjectTerminal(projectTerminalsRef.current, projectCwd);
+    if (!looksLikeProject(gitCwd)) return;
+    const dock = findProjectTerminal(projectTerminalsRef.current, gitCwd);
     if (!dock) {
-      openProjectTerminal(active?.cwd ?? projectCwd);
+      openProjectTerminal(gitCwd);
       return;
     }
     const nextOpen = !dock.open;
     setProjectTerminals((prev) =>
-      mapProjectTerminal(prev, projectCwd, (entry) =>
+      mapProjectTerminal(prev, gitCwd, (entry) =>
         withDockOpen(entry, nextOpen),
       ),
     );
     if (nextOpen) focusProjectTerminal();
     else setProjectTerminalFocused(false);
-  }, [active?.cwd, focusProjectTerminal, openProjectTerminal, projectCwd]);
+  }, [active?.cwd, focusProjectTerminal, openProjectTerminal, gitCwd]);
 
   const onHideProjectTerminal = useCallback(() => {
     setProjectTerminals((prev) =>
-      mapProjectTerminal(prev, projectCwdRef.current, (dock) =>
+      mapProjectTerminal(prev, gitCwdRef.current, (dock) =>
         withDockOpen(dock, false),
       ),
     );
@@ -1829,7 +1924,7 @@ export default function App({
 
   const onProjectTerminalSide = useCallback((side: DockSide) => {
     setProjectTerminals((prev) =>
-      mapProjectTerminal(prev, projectCwdRef.current, (dock) =>
+      mapProjectTerminal(prev, gitCwdRef.current, (dock) =>
         withDockSide(dock, side, {
           width: window.innerWidth,
           height: window.innerHeight,
@@ -1840,7 +1935,7 @@ export default function App({
 
   const onProjectTerminalSize = useCallback((size: number) => {
     setProjectTerminals((prev) =>
-      mapProjectTerminal(prev, projectCwdRef.current, (dock) =>
+      mapProjectTerminal(prev, gitCwdRef.current, (dock) =>
         withDockSize(dock, size, {
           width: window.innerWidth,
           height: window.innerHeight,
@@ -1852,7 +1947,7 @@ export default function App({
   const onSelectProjectTerminal = useCallback(
     (fileId: string) => {
       setProjectTerminals((prev) =>
-        mapProjectTerminal(prev, projectCwdRef.current, (dock) =>
+        mapProjectTerminal(prev, gitCwdRef.current, (dock) =>
           selectDockTerminal(dock, fileId),
         ),
       );
@@ -1863,7 +1958,7 @@ export default function App({
 
   const onReorderProjectTerminals = useCallback((ids: string[]) => {
     setProjectTerminals((prev) =>
-      mapProjectTerminal(prev, projectCwdRef.current, (dock) =>
+      mapProjectTerminal(prev, gitCwdRef.current, (dock) =>
         reorderDockTerminals(dock, orderByIds(dock.pane.files, ids)),
       ),
     );
@@ -1872,13 +1967,13 @@ export default function App({
   const onCloseProjectTerminal = useCallback((fileId: string) => {
     const dock = findProjectTerminal(
       projectTerminalsRef.current,
-      projectCwdRef.current,
+      gitCwdRef.current,
     );
     const file = dock?.pane.files.find((entry) => entry.id === fileId);
     if (!file) return;
     const finishClose = () => {
       setProjectTerminals((prev) =>
-        mapProjectTerminal(prev, projectCwdRef.current, (entry) =>
+        mapProjectTerminal(prev, gitCwdRef.current, (entry) =>
           closeTerminalInDock(entry, fileId),
         ),
       );
@@ -1887,7 +1982,7 @@ export default function App({
   }, []);
 
   const onCloseOtherProjectTerminals = useCallback((fileId: string) => {
-    const projectPath = projectCwdRef.current;
+    const projectPath = gitCwdRef.current;
     const dock = findProjectTerminal(projectTerminalsRef.current, projectPath);
     if (!dock?.pane.files.some((file) => file.id === fileId)) return;
     const closingFiles = dock.pane.files.filter((file) => file.id !== fileId);
@@ -1984,8 +2079,8 @@ export default function App({
   );
 
   const onNewTerminalTab = useCallback(() => {
-    onOpenTerminal(active?.cwd ?? projectCwd, true);
-  }, [active?.cwd, onOpenTerminal, projectCwd]);
+    onOpenTerminal(active ? sessionWorkCwd(active) : projectCwd, true);
+  }, [active, onOpenTerminal, projectCwd]);
 
   const onCloseTab = useCallback(
     (id: string, opts?: { confirmedTerminalIds?: string[] }) => {
@@ -2745,14 +2840,48 @@ export default function App({
       const open = sessionsRef.current.find(
         (session) => session.id === sessionId,
       );
-      if (open) return open;
-
-      const loaded = await getSession(sessionId).catch(() => null);
+      if (open && !shouldPersistSession(open)) return open;
+      let loaded = open ?? (await getSession(sessionId).catch(() => null));
       if (!loaded) {
         void refreshHistory(sidebarCwd);
         return null;
       }
-      const restored = await restoreSessionCheckout(loaded);
+      const restoringToast = loaded.worktreeCwd
+        ? toast.loading("Opening worktree…", {
+            description:
+              "Preparing this conversation’s working folder.",
+          })
+        : null;
+      try {
+        loaded = await resumeArchivedWorktreeSession(loaded);
+      } catch (error) {
+        void message(
+          `Could not reopen this conversation.\n\n${String(error)}`,
+          {
+            title: "MonoCode",
+            kind: "error",
+          },
+        );
+        return null;
+      } finally {
+        if (restoringToast != null) toast.dismiss(restoringToast);
+      }
+      setHistory((current) =>
+        current.map((entry) =>
+          entry.id === sessionId ? { ...entry, archived: false } : entry,
+        ),
+      );
+      if (open) {
+        const next = sessionsRef.current.map((entry) =>
+          entry.id === sessionId && entry.worktreeCwd
+            ? { ...entry, branch: undefined }
+            : entry,
+        );
+        sessionsRef.current = next;
+        setSessions(next);
+        return next.find((entry) => entry.id === sessionId) ?? loaded;
+      }
+      const restored = restoreSessionCheckout(loaded);
       if (restored.providerSessionId && isLiveHarness(restored.harness)) {
         bindHarnessSession(
           restored.harness,
@@ -2959,12 +3088,12 @@ export default function App({
   const onSelectHistorySession = useCallback(
     async (sessionId: string) => {
       const linkedUpdate = linkedSessionUpdatesRef.current.get(sessionId);
+      const session = await ensureOpenSession(sessionId);
+      if (!session || session.inboxAsk) return;
       if (focusOpenSession(sessionId)) {
         if (linkedUpdate) revealLinkedSessionUpdate(sessionId, linkedUpdate);
         return;
       }
-      const session = await ensureOpenSession(sessionId);
-      if (!session || session.inboxAsk) return;
       if (replaceBlankPaneWithSession(session)) {
         if (linkedUpdate) revealLinkedSessionUpdate(sessionId, linkedUpdate);
         return;
@@ -3021,7 +3150,9 @@ export default function App({
   const sessionReminders = useSessionReminders(
     openReminderSession,
     ensureReminderSessionsSaved,
-    sessions.filter((session) => !session.inboxAsk).map((session) => session.id),
+    sessions
+      .filter((session) => !session.inboxAsk)
+      .map((session) => session.id),
   );
 
   const onPlaceSessionOnPane = useCallback(
@@ -3220,6 +3351,15 @@ export default function App({
             });
             sessionsRef.current = removal.sessions;
             tabsRef.current = removal.tabs;
+            void heartbeatWorktrees(
+              protectedWorktreePaths(
+                removal.sessions,
+                removal.tabs,
+                projectTerminalsRef.current,
+              ),
+            )
+              .then(() => refreshWorktrees(seed?.cwd ?? sidebarCwd))
+              .catch(() => undefined);
             setSessions(removal.sessions);
             setTabs(removal.tabs);
             if (removal.activeTabId !== activeTabIdRef.current) {
@@ -3272,9 +3412,50 @@ export default function App({
     ],
   );
 
+  const archiveAndReviewWorktrees = useCallback(
+    (sessionIds: readonly string[]) =>
+      archiveSessionsWithRetirement({
+        sessionIds,
+        archive: (sessionId) => onRemoveHistorySession(sessionId, "archive"),
+        protectedPaths: () =>
+          protectedWorktreePaths(
+            sessionsRef.current,
+            tabsRef.current,
+            projectTerminalsRef.current,
+          ),
+        onReview: (plan) => {
+          if (plan.entries.length > 0) {
+            setArchiveRetirementPlans((current) => [...current, plan]);
+          } else if (plan.kept.length > 0) {
+            toast(
+              sessionIds.length === 1
+                ? "Session archived"
+                : "Sessions archived",
+              {
+                description:
+                  plan.kept.length === 1
+                    ? `Worktree kept: ${plan.kept[0].reason}`
+                    : `${plan.kept.length} worktrees kept. Review them in Settings → Worktrees.`,
+              },
+            );
+          }
+        },
+        onReviewError: () => {
+          toast(
+            sessionIds.length === 1 ? "Session archived" : "Sessions archived",
+            {
+              description:
+                "Cleanup could not be checked. Review it later in Settings → Worktrees.",
+            },
+          );
+        },
+      }),
+    [onRemoveHistorySession],
+  );
+
   const onArchiveHistorySession = useCallback(
     async (sessionId: string, archived: boolean) => {
-      if (archived) return onRemoveHistorySession(sessionId, "archive");
+      if (archived) return archiveAndReviewWorktrees([sessionId]);
       if (removingSessionIds.current.has(sessionId)) return false;
       try {
         await setSessionArchived(sessionId, false);
@@ -3295,7 +3476,7 @@ export default function App({
         return false;
       }
     },
-    [onRemoveHistorySession],
+    [archiveAndReviewWorktrees],
   );
 
   const onArchiveFocusedSession = useCallback(
@@ -3313,6 +3494,7 @@ export default function App({
             notesViewOpenRef.current ||
             settingsOpenRef.current ||
             filePickerOpenRef.current ||
+            archiveRetirementPlans.length > 0 ||
             whatsNewVersionRef.current,
           ),
         },
@@ -3321,7 +3503,7 @@ export default function App({
         },
       );
     },
-    [onArchiveHistorySession],
+    [onArchiveHistorySession, archiveRetirementPlans.length],
   );
 
   const onPinHistorySession = useCallback(
@@ -3350,11 +3532,15 @@ export default function App({
 
   const onArchiveHistorySessions = useCallback(
     async (sessionIds: readonly string[], archived: boolean) => {
+      if (archived) {
+        await archiveAndReviewWorktrees(sessionIds);
+        return;
+      }
       for (const sessionId of sessionIds) {
         if (!(await onArchiveHistorySession(sessionId, archived))) break;
       }
     },
-    [onArchiveHistorySession],
+    [archiveAndReviewWorktrees, onArchiveHistorySession],
   );
 
   const onPinHistorySessions = useCallback(
@@ -3421,7 +3607,7 @@ export default function App({
         previous &&
         looksLikeProject(previous) &&
         !sameProjectPath(previous, normalized) &&
-        !isBlankSession(current)
+        (!isBlankSession(current) || !!current.worktreeCwd)
       ) {
         setProjectCwd(normalized);
         setRecents(rememberProject(normalized));
@@ -3456,6 +3642,7 @@ export default function App({
                 cwd: normalized,
                 branch: undefined,
                 worktreeCwd: undefined,
+                workspaceChoice: undefined,
               }
             : s,
         ),
@@ -3483,20 +3670,29 @@ export default function App({
     [appendTab, projectOfTab],
   );
 
+  const onWorkspaceChange = useCallback(
+    (sessionId: string, workspaceChoice: WorkspaceChoice) => {
+      const current = sessionsRef.current.find(
+        (session) => session.id === sessionId,
+      );
+      if (!current || current.busy || !canChooseWorkspace(current)) return;
+      const next = sessionsRef.current.map((session) =>
+        session.id === sessionId
+          ? { ...session, workspaceChoice, branch: undefined }
+          : session,
+      );
+      sessionsRef.current = next;
+      setSessions(next);
+    },
+    [],
+  );
+
   const onBranchChange = useCallback(
     (sessionId: string) => {
       notifyGitChanged();
       const current = sessionsRef.current.find((s) => s.id === sessionId);
       if (!current || (!current.branch && !current.worktreeCwd)) return;
-      if (current.worktreeCwd && current.providerSessionId) {
-        void forgetHarnessSession(current.harness, sessionId);
-      }
-      const next = {
-        ...current,
-        branch: undefined,
-        worktreeCwd: undefined,
-        ...(current.worktreeCwd ? { providerSessionId: undefined } : {}),
-      };
+      const next = { ...current, branch: undefined };
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? next : s)));
       persistSession(next);
       notifyReviewChanged(sessionId);
@@ -3967,7 +4163,7 @@ export default function App({
       }
       if (isPreparingHandoff(current)) return;
       saveRecentModelChoice(current.harness, current.model);
-      const workCwd = sessionWorkCwd(current);
+      let workCwd = sessionWorkCwd(current);
       const submittedText = intent === "build" ? "Build approved plan" : text;
       const rawCommand = isNativeCommandPrompt(submittedText, current.harness);
       const harnessText = rawCommand
@@ -4297,12 +4493,95 @@ export default function App({
           return event;
         };
 
-        if (!current.inboxAsk) {
-          await beginSessionTurn(sessionId, workCwd).catch(() => undefined);
-        }
-        if (turnGen.current.get(sessionId) !== gen) return;
         let buildSucceeded = false;
+        const worktreeStatusId =
+          canChooseWorkspace(current) &&
+          current.workspaceChoice?.mode !== "local"
+            ? crypto.randomUUID()
+            : null;
+        const showWorktreePreparation = (show: boolean) => {
+          if (!worktreeStatusId) return;
+          const withoutStatus = (session: Session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  blocks: session.blocks.filter(
+                    (block) => block.id !== worktreeStatusId,
+                  ),
+                }
+              : session;
+          if (!show) {
+            sessionsRef.current = sessionsRef.current.map(withoutStatus);
+            setSessions((previous) => previous.map(withoutStatus));
+            return;
+          }
+          setSessions((previous) =>
+            previous.map((session) => {
+              if (session.id !== sessionId) return session;
+              return {
+                ...session,
+                blocks: [
+                  ...session.blocks,
+                  {
+                    id: worktreeStatusId,
+                    role: "system",
+                    text: "Preparing worktree…",
+                  },
+                ],
+              };
+            }),
+          );
+        };
         try {
+          if (!current.inboxAsk) {
+            showWorktreePreparation(true);
+            let worktreeCwd: string | null;
+            try {
+              worktreeCwd = await prepareSessionWorktree(
+                current,
+                submittedText,
+              );
+            } finally {
+              showWorktreePreparation(false);
+            }
+            if (turnGen.current.get(sessionId) !== gen) return;
+            if (worktreeCwd) {
+              workCwd = worktreeCwd;
+              const next = sessionsRef.current.map((session) =>
+                session.id === sessionId
+                  ? {
+                      ...session,
+                      worktreeCwd,
+                      workspaceChoice: undefined,
+                      branch: undefined,
+                    }
+                  : session,
+              );
+              sessionsRef.current = next;
+              setSessions(next);
+              // Persist checkout identity before the agent can change any files.
+              const preparedSession = next.find(
+                (session) => session.id === sessionId,
+              );
+              if (preparedSession) await upsertSession(preparedSession);
+              notifyGitChanged();
+            }
+            // A restored workspace may still contain an archived conversation.
+            // Resuming work must protect it after this window's lease ends.
+            if (shouldPersistSession(current)) {
+              await setSessionArchived(sessionId, false);
+            }
+            if (turnGen.current.get(sessionId) !== gen) return;
+            await beginSessionTurn(sessionId, workCwd);
+            setHistory((entries) =>
+              entries.map((entry) =>
+                entry.id === sessionId && entry.archived
+                  ? { ...entry, archived: false }
+                  : entry,
+              ),
+            );
+          }
+          if (turnGen.current.get(sessionId) !== gen) return;
           const prepared = await prepareAttachments(attachments);
           const prompt =
             intent === "build" && approvedPlan
@@ -4370,9 +4649,7 @@ export default function App({
           if (turnGen.current.get(sessionId) !== gen) return;
           if (wrap) revealHandoff(wrap.text);
           const message =
-            error instanceof Error
-              ? error.message
-              : `${current.harness} adapter failed`;
+            error instanceof Error ? error.message : String(error);
           if (!providerFailureSeen) {
             enqueueHarnessEvent(sessionId, {
               type: "session.error",
@@ -4963,7 +5240,8 @@ export default function App({
   const onQuestionInteraction = useCallback(
     (sessionId: string, requestId: number) => {
       const session = sessionsRef.current.find((s) => s.id === sessionId);
-      if (session) keepHarnessQuestionOpen(session.harness, sessionId, requestId);
+      if (session)
+        keepHarnessQuestionOpen(session.harness, sessionId, requestId);
     },
     [],
   );
@@ -5656,6 +5934,7 @@ export default function App({
     onClose: onClosePane,
     onCwdChange,
     onBranchChange,
+    onWorkspaceChange,
     onModelChange,
     onModelSettingsChange,
     onRuntimeModeChange,
@@ -5858,7 +6137,7 @@ export default function App({
             >
               {projectTerminals.map((dock) => {
                 const show =
-                  dock.open && sameProjectPath(dock.projectPath, projectCwd);
+                  dock.open && sameProjectPath(dock.projectPath, gitCwd);
                 return (
                   <div
                     key={dock.projectPath}
@@ -5879,7 +6158,9 @@ export default function App({
                       onSizePaint={paintDockSize}
                       onSizeCommit={commitDockSize}
                       onAddTerminal={() =>
-                        onOpenTerminal(active?.cwd ?? projectCwd)
+                        onOpenTerminal(
+                          active ? sessionWorkCwd(active) : projectCwd,
+                        )
                       }
                       onSelectTerminal={onSelectProjectTerminal}
                       onCloseTerminal={onCloseProjectTerminal}
@@ -6020,6 +6301,8 @@ export default function App({
         {settingsOpen ? (
           <SettingsView
             section={settingsSection}
+            onOpenWorktree={onOpenWorktree}
+            recents={recents}
             anchor={settingsAnchor}
             cwd={sidebarCwd}
             sessions={sidebarHistory}
@@ -6059,6 +6342,25 @@ export default function App({
         />
       ) : null}
 
+      {archiveRetirementPlans[0] ? (
+        <WorktreeRetirementDialog
+          key={archiveRetirementPlans[0].planId}
+          plan={archiveRetirementPlans[0]}
+          source="archive"
+          onClose={() =>
+            setArchiveRetirementPlans((current) => current.slice(1))
+          }
+          onRetired={() => {
+            for (const repo of new Set(
+              archiveRetirementPlans[0].entries.map((entry) => entry.repo),
+            )) {
+              refreshWorktrees(repo);
+            }
+            notifyGitChanged();
+          }}
+        />
+      ) : null}
+      <AppToaster />
       <ApprovalToasts
         notices={hiddenApprovalToasts}
         topOffset={

@@ -41,6 +41,7 @@ import FlashIcon from "@hugeicons/core-free-icons/FlashIcon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 import FolderAddIcon from "@hugeicons/core-free-icons/FolderAddIcon";
 import FolderOpenIcon from "@hugeicons/core-free-icons/FolderOpenIcon";
+import FolderGitTwoIcon from "@hugeicons/core-free-icons/FolderGitTwoIcon";
 import FolderTreeIcon from "@hugeicons/core-free-icons/FolderTreeIcon";
 import GaugeIcon from "@hugeicons/core-free-icons/GaugeIcon";
 import GitBranchIcon from "@hugeicons/core-free-icons/GitBranchIcon";
@@ -179,6 +180,8 @@ export const FolderPlus = wrap(FolderAddIcon, "FolderPlus");
 export const FolderTree = wrap(FolderTreeIcon, "FolderTree");
 export const Gauge = wrap(GaugeIcon, "Gauge");
 export const GitBranch = wrap(GitBranchIcon, "GitBranch");
+/** A checkout directory, distinct from the branch ref shown beside it. */
+export const Worktree = wrap(FolderGitTwoIcon, "Worktree");
 export const GitCompare = wrap(GitCompareIcon, "GitCompare");
 export const GitMerge = wrap(GitMergeIcon, "GitMerge");
 export const GitPullRequest = wrap(GitPullRequestIcon, "GitPullRequest");
