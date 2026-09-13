@@ -2846,12 +2846,6 @@ export default function App({
         void refreshHistory(sidebarCwd);
         return null;
       }
-      const restoringToast = loaded.worktreeCwd
-        ? toast.loading("Opening worktree…", {
-            description:
-              "Preparing this conversation’s working folder.",
-          })
-        : null;
       try {
         loaded = await resumeArchivedWorktreeSession(loaded);
       } catch (error) {
@@ -2863,8 +2857,6 @@ export default function App({
           },
         );
         return null;
-      } finally {
-        if (restoringToast != null) toast.dismiss(restoringToast);
       }
       setHistory((current) =>
         current.map((entry) =>
