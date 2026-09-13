@@ -1216,19 +1216,19 @@ export function InboxDetail({
     : gitlabKind
       ? peekGitlabWorkItemDetails(item.repo, gitlabKind, item.number)
       : githubKind
-        ? peekGithubWorkItemDetails(item.projectPath, githubKind, item.number)
+        ? peekGithubWorkItemDetails(item.repo, githubKind, item.number)
         : null;
   const cachedDiff = isPr
     ? gitlab
       ? peekGitlabMrDiff(item.repo, item.number)
-      : peekGithubPrDiff(item.projectPath, item.number)
+      : peekGithubPrDiff(item.repo, item.number)
     : null;
   const cachedThread = linear
     ? peekLinearIssueThread(item.id ?? "")
     : gitlabKind
       ? peekGitlabWorkItemThread(item.repo, gitlabKind, item.number)
       : githubKind
-        ? peekGithubWorkItemThread(item.projectPath, githubKind, item.number)
+        ? peekGithubWorkItemThread(item.repo, githubKind, item.number)
         : null;
   const [details, setDetails] = useState<GithubWorkItemDetails | null>(cached);
   const [loading, setLoading] = useState(cached == null);
@@ -1296,7 +1296,7 @@ export function InboxDetail({
       : gitlabKind
         ? peekGitlabWorkItemDetails(item.repo, gitlabKind, item.number)
         : githubKind
-          ? peekGithubWorkItemDetails(item.projectPath, githubKind, item.number)
+          ? peekGithubWorkItemDetails(item.repo, githubKind, item.number)
           : null;
     if (cachedDetails) {
       setDetails(cachedDetails);
@@ -1314,7 +1314,12 @@ export function InboxDetail({
       : gitlabKind
         ? gitlabWorkItemDetails(item.repo, gitlabKind, item.number)
         : githubKind
-          ? githubWorkItemDetails(item.projectPath, githubKind, item.number)
+          ? githubWorkItemDetails(
+              item.projectPath,
+              item.repo,
+              githubKind,
+              item.number,
+            )
           : Promise.reject(new Error("Unknown inbox item"));
     void pending
       .then((next) => {
@@ -1411,7 +1416,7 @@ export function InboxDetail({
     }
     if (!githubKind) return;
     const cachedThread = peekGithubWorkItemThread(
-      item.projectPath,
+      item.repo,
       githubKind,
       item.number,
     );
@@ -1424,7 +1429,12 @@ export function InboxDetail({
       setThreadError(null);
       setThread(null);
     }
-    void githubWorkItemThread(item.projectPath, githubKind, item.number)
+    void githubWorkItemThread(
+      item.projectPath,
+      item.repo,
+      githubKind,
+      item.number,
+    )
       .then((next) => {
         if (cancelled) return;
         setThread(next);
@@ -1457,7 +1467,7 @@ export function InboxDetail({
     let cancelled = false;
     const cachedDiff = gitlab
       ? peekGitlabMrDiff(item.repo, item.number)
-      : peekGithubPrDiff(item.projectPath, item.number);
+      : peekGithubPrDiff(item.repo, item.number);
     if (cachedDiff) {
       setPrDiff(cachedDiff);
       setDiffLoading(false);
@@ -1469,7 +1479,7 @@ export function InboxDetail({
     }
     const pending = gitlab
       ? gitlabMrDiff(item.repo, item.number)
-      : githubPrDiff(item.projectPath, item.number);
+      : githubPrDiff(item.projectPath, item.repo, item.number);
     void pending
       .then((next) => {
         if (cancelled) return;
@@ -1521,6 +1531,7 @@ export function InboxDetail({
       if (!githubKind) throw new Error("Unknown inbox item");
       await githubWorkItemComment(
         item.projectPath,
+        item.repo,
         githubKind,
         item.number,
         body,
@@ -1531,6 +1542,7 @@ export function InboxDetail({
         setThread(
           await githubWorkItemThread(
             item.projectPath,
+            item.repo,
             githubKind,
             item.number,
             {
@@ -1808,7 +1820,7 @@ export function InboxDetail({
               <p className="text-[13px] text-content/50">{diffError}</p>
             ) : prDiff ? (
               <InboxPrDiff
-                key={`${item.projectPath}:${item.number}:${revision}`}
+                key={`${inboxItemKey(item)}:${revision}`}
                 diff={prDiff}
               />
             ) : (

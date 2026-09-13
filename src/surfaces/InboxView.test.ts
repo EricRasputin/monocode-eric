@@ -1,9 +1,21 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import type { InboxItem } from "../lib/githubTasks";
+import { invoke } from "@tauri-apps/api/core";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearInboxCache,
+  githubWorkItemDetails,
+  type InboxItem,
+} from "../lib/githubTasks";
 import type { SessionSummary } from "../lib/sessionStore";
 import { InboxDetail } from "./InboxView";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
+beforeEach(() => {
+  clearInboxCache();
+  vi.mocked(invoke).mockReset();
+});
 
 function item(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
@@ -41,6 +53,22 @@ function renderDetail(
 }
 
 describe("InboxDetail layout", () => {
+  it("renders upstream details when the fork has the same issue number", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      body: "Fork description",
+      author: "forker",
+    });
+    await githubWorkItemDetails("/tmp/web", "me/web", "issue", 157);
+    vi.mocked(invoke).mockResolvedValueOnce({
+      body: "Upstream description",
+      author: "maintainer",
+    });
+    await githubWorkItemDetails("/tmp/web", "acme/web", "issue", 157);
+    const markup = renderDetail(item());
+    expect(markup).toContain("Upstream description");
+    expect(markup).not.toContain("Fork description");
+  });
+
   it("keeps issue identity and actions outside the body scroller", () => {
     const markup = renderDetail(item({ projectPath: "/tmp/local-project" }));
     const headerIndex = markup.indexOf("data-inbox-detail-header");
