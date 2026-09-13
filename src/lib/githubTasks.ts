@@ -159,6 +159,7 @@ type InboxListCache = InboxListResult & {
 let inboxListCache: InboxListCache | null = null;
 const inboxListInflight = new Map<string, Promise<InboxListResult>>();
 const repoByPath = new Map<string, string>();
+const inboxReposByPath = new Map<string, string[]>();
 const workItemByKey = new Map<string, GithubWorkItem>();
 const workItemInflight = new Map<string, Promise<GithubWorkItem>>();
 const detailsByKey = new Map<string, GithubWorkItemDetails>();
@@ -171,6 +172,7 @@ export function clearInboxCache() {
   inboxListCache = null;
   inboxListInflight.clear();
   repoByPath.clear();
+  inboxReposByPath.clear();
   workItemByKey.clear();
   workItemInflight.clear();
   detailsByKey.clear();
@@ -234,12 +236,23 @@ export async function githubRepo(cwd: string): Promise<string> {
   return repo;
 }
 
+export async function githubInboxRepos(cwd: string): Promise<string[]> {
+  const key = normalizeProjectPath(cwd);
+  const cached = inboxReposByPath.get(key);
+  if (cached !== undefined) return cached;
+  const repos = await invoke<string[]>("git_github_inbox_repos", { cwd });
+  inboxReposByPath.set(key, repos);
+  return repos;
+}
+
 export function listGithubWorkItems(
   cwd: string,
+  repo: string,
   query: GithubWorkItemQuery,
 ): Promise<GithubWorkItem[]> {
   return invoke<GithubWorkItem[]>("git_github_work_items", {
     cwd,
+    repo,
     kind: query.kind,
     assignedToMe: query.assignedToMe,
     state: query.state,
@@ -351,49 +364,51 @@ export function formatRelativeTime(
 }
 
 export function detailsCacheKey(
-  cwd: string,
+  repo: string,
   kind: GithubTaskKind,
   number: number,
 ): string {
-  return `${normalizeProjectPath(cwd)}:${kind}:${number}`;
+  return workItemLookupKey(repo, kind, number);
 }
 
 export function peekGithubWorkItemDetails(
-  cwd: string,
+  repo: string,
   kind: GithubTaskKind,
   number: number,
 ): GithubWorkItemDetails | null {
-  return detailsByKey.get(detailsCacheKey(cwd, kind, number)) ?? null;
+  return detailsByKey.get(detailsCacheKey(repo, kind, number)) ?? null;
 }
 
 export async function githubWorkItemDetails(
   cwd: string,
+  repo: string,
   kind: GithubTaskKind,
   number: number,
 ): Promise<GithubWorkItemDetails> {
   const details = await invoke<GithubWorkItemDetails>(
     "git_github_work_item_details",
-    { cwd, kind, number },
+    { cwd, repo, kind, number },
   );
-  detailsByKey.set(detailsCacheKey(cwd, kind, number), details);
+  detailsByKey.set(detailsCacheKey(repo, kind, number), details);
   return details;
 }
 
 export function peekGithubWorkItemThread(
-  cwd: string,
+  repo: string,
   kind: GithubTaskKind,
   number: number,
 ): GithubWorkItemThread | null {
-  return threadByKey.get(detailsCacheKey(cwd, kind, number)) ?? null;
+  return threadByKey.get(detailsCacheKey(repo, kind, number)) ?? null;
 }
 
 export async function githubWorkItemThread(
   cwd: string,
+  repo: string,
   kind: GithubTaskKind,
   number: number,
   options?: { force?: boolean },
 ): Promise<GithubWorkItemThread> {
-  const key = detailsCacheKey(cwd, kind, number);
+  const key = detailsCacheKey(repo, kind, number);
   if (options?.force) {
     threadByKey.delete(key);
     threadInflight.delete(key);
@@ -402,6 +417,7 @@ export async function githubWorkItemThread(
   if (pending) return pending;
   const promise = invoke<GithubWorkItemThread>("git_github_work_item_thread", {
     cwd,
+    repo,
     kind,
     number,
   })
@@ -418,6 +434,7 @@ export async function githubWorkItemThread(
 
 export async function githubWorkItemComment(
   cwd: string,
+  repo: string,
   kind: GithubTaskKind,
   number: number,
   body: string,
@@ -425,12 +442,13 @@ export async function githubWorkItemComment(
 ): Promise<string> {
   const url = await invoke<string>("git_github_work_item_comment", {
     cwd,
+    repo,
     kind,
     number,
     body: body.trim(),
     inReplyTo: options?.inReplyTo?.trim() ?? "",
   });
-  const key = detailsCacheKey(cwd, kind, number);
+  const key = detailsCacheKey(repo, kind, number);
   threadByKey.delete(key);
   threadInflight.delete(key);
   return url;
@@ -499,25 +517,30 @@ export function gitlabAttentionLabel(reason: string): string {
   }
 }
 
-export function prDiffCacheKey(cwd: string, number: number): string {
-  return `${normalizeProjectPath(cwd)}:pr:${number}`;
+export function prDiffCacheKey(repo: string, number: number): string {
+  return workItemLookupKey(repo, "pr", number);
 }
 
 export function peekGithubPrDiff(
-  cwd: string,
+  repo: string,
   number: number,
 ): GithubPrDiff | null {
-  return prDiffByKey.get(prDiffCacheKey(cwd, number)) ?? null;
+  return prDiffByKey.get(prDiffCacheKey(repo, number)) ?? null;
 }
 
 export async function githubPrDiff(
   cwd: string,
+  repo: string,
   number: number,
 ): Promise<GithubPrDiff> {
-  const key = prDiffCacheKey(cwd, number);
+  const key = prDiffCacheKey(repo, number);
   const pending = prDiffInflight.get(key);
   if (pending) return pending;
-  const promise = invoke<GithubPrDiff>("git_github_pr_diff", { cwd, number })
+  const promise = invoke<GithubPrDiff>("git_github_pr_diff", {
+    cwd,
+    repo,
+    number,
+  })
     .then((diff) => {
       prDiffByKey.set(key, diff);
       return diff;
@@ -558,22 +581,20 @@ async function fetchInboxItems(
 ): Promise<InboxListResult> {
   const unique = uniqueInboxProjects(projects);
   const preferredPaths = unique.map((project) => project.path);
-  const resolved = await Promise.all(
+  const resolved = await Promise.allSettled(
     unique.map(async (project) => {
-      try {
-        return {
-          path: project.path,
-          repo: (await githubRepo(project.path)).trim(),
-        };
-      } catch {
-        return { path: project.path, repo: "" };
-      }
+      const repos = await githubInboxRepos(project.path);
+      return repos.map((repo) => ({ path: project.path, repo }));
     }),
   );
-  const grouped = groupProjectsByRepo(resolved);
+  const grouped = groupProjectsByRepo(
+    resolved.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    ),
+  );
   const githubJobs = grouped.flatMap((project) =>
     (["issue", "pr"] as const).map(async (kind) => {
-      const items = await listGithubWorkItems(project.path, {
+      const items = await listGithubWorkItems(project.path, project.repo, {
         ...query,
         kind,
       });
@@ -586,11 +607,14 @@ async function fetchInboxItems(
     }),
   );
   const github = collectInboxResults(
-    await Promise.allSettled(githubJobs),
+    [
+      ...resolved.filter((result) => result.status === "rejected"),
+      ...(await Promise.allSettled(githubJobs)),
+    ],
     preferredPaths,
   );
   const errors: InboxProviderErrors = {};
-  if (github.error && grouped.length > 0) errors.github = github.error;
+  if (github.error && unique.length > 0) errors.github = github.error;
 
   let linearItems: InboxItem[] = [];
   if ((await linearConnected()).connected) {

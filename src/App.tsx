@@ -2932,6 +2932,7 @@ export default function App({
 
       void githubWorkItemThread(
         session.cwd,
+        session.linkedWorkItem.repo,
         session.linkedWorkItem.kind,
         session.linkedWorkItem.number,
         { force: true },
