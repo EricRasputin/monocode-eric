@@ -1,3 +1,5 @@
+import { WorktreeManager } from "../chrome/WorktreeManager";
+import type { WorktreeEntry } from "../lib/worktrees";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDownCircle,
@@ -221,6 +223,7 @@ type Props = {
   onRestoreProject?: (path: string) => void;
   onDeleteProject?: (path: string) => void;
   onOpenWhatsNew: (version: string) => void;
+  onOpenWorktree: (cwd: string, entry: WorktreeEntry) => Promise<void>;
 };
 
 export function SettingsView({
@@ -236,6 +239,7 @@ export function SettingsView({
   onRestoreProject,
   onDeleteProject,
   onOpenWhatsNew,
+  onOpenWorktree,
 }: Props) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   useEffect(() => {
@@ -313,6 +317,9 @@ export function SettingsView({
           {section === "providers" ? <ProvidersPage /> : null}
           {section === "inbox" ? <InboxPage /> : null}
           {section === "skills" ? <SkillsPage key={cwd} cwd={cwd} /> : null}
+          {section === "worktrees" ? (
+            <WorktreeManager key={cwd} cwd={cwd} onOpen={(entry) => onOpenWorktree(cwd, entry)} />
+          ) : null}
           {section === "archive" ? (
             <ArchivePage
               cwd={cwd}

@@ -24,6 +24,7 @@ mod window;
 mod window_transfer;
 #[cfg(windows)]
 mod windows;
+mod worktrees;
 
 // Phase 1 seam: spawn / kill harness children per MonoCode thread.
 // Adapters own the protocol; this host only supervises processes.
@@ -175,6 +176,7 @@ pub fn run() {
         .setup(|app| {
             harness::reap_orphaned_harness_processes();
             session_store::init(app.handle())?;
+            worktrees::init(app.handle())?;
             reminders::init(app.handle());
             checkpoint::init(app.handle())?;
             menu::install(app.handle())?;
@@ -259,6 +261,13 @@ pub fn run() {
             linear::linear_issue_details,
             linear::linear_issue_thread,
             linear::linear_issue_comment,
+            worktrees::worktree_list,
+            worktrees::worktree_settings_set,
+            worktrees::worktree_create,
+            worktrees::worktree_prepare,
+            worktrees::worktree_heartbeat,
+            worktrees::worktree_pin,
+            worktrees::worktree_cleanup,
             fs::git_branches,
             fs::git_checkout,
             fs::git_create_branch,

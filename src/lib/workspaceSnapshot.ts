@@ -43,6 +43,7 @@ export type WorkspaceSessionStub = {
   providerSessionId?: string;
   branch?: string;
   worktreeCwd?: string;
+  workspaceChoice?: Session["workspaceChoice"];
 };
 
 export type WorkspaceSnapshot = {
@@ -207,7 +208,7 @@ export function hydrateWorkspaceSnapshot(
     if (existing) return existing;
     const record = loaded.get(id);
     const stub = stubs.get(id);
-    const base = record ?? (stub ? sessionFromStub(stub) : null);
+    const base = record ? { ...record, workspaceChoice: stub?.workspaceChoice } : (stub ? sessionFromStub(stub) : null);
     if (!base || base.inboxAsk) return null;
     const next = interruptedIds.has(id) ? markTurnInterrupted(base) : { ...base, busy: false };
     sessions.set(id, next);
@@ -283,6 +284,7 @@ function sessionStub(session: Session): WorkspaceSessionStub | null {
       : {}),
     ...(session.branch ? { branch: session.branch } : {}),
     ...(session.worktreeCwd ? { worktreeCwd: session.worktreeCwd } : {}),
+    ...(session.workspaceChoice ? { workspaceChoice: session.workspaceChoice } : {}),
   };
 }
 
@@ -304,6 +306,7 @@ function sessionFromStub(stub: WorkspaceSessionStub): Session {
       : {}),
     ...(stub.branch ? { branch: stub.branch } : {}),
     ...(stub.worktreeCwd ? { worktreeCwd: stub.worktreeCwd } : {}),
+    ...(stub.workspaceChoice ? { workspaceChoice: stub.workspaceChoice } : {}),
   };
 }
 
@@ -324,8 +327,14 @@ function sanitizeStub(raw: unknown): WorkspaceSessionStub | null {
           ),
         )
       : {};
+  const choice = value.workspaceChoice as Record<string, unknown> | undefined;
+  const workspaceChoice = choice && (choice.mode === "local" || choice.mode === "worktree")
+    ? { mode: choice.mode, ...(typeof choice.baseRef === "string" ? { baseRef: choice.baseRef } : {}),
+        ...(typeof choice.path === "string" && choice.path ? { path: choice.path } : {}) } as Session["workspaceChoice"]
+    : undefined;
   return {
     id: value.id,
+    ...(workspaceChoice ? { workspaceChoice } : {}),
     cwd:
       typeof value.cwd === "string" && value.cwd.trim() ? value.cwd.trim() : "~",
     harness,

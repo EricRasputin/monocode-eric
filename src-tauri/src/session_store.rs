@@ -39,6 +39,7 @@ impl SessionStore {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
             .map_err(|e| e.to_string())?;
         migrate(&conn).map_err(|e| e.to_string())?;
+        crate::worktrees::schema(&conn).map_err(|e| e.to_string())?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -50,9 +51,27 @@ impl SessionStore {
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|e| e.to_string())?;
         migrate(&conn).map_err(|e| e.to_string())?;
+        crate::worktrees::schema(&conn).map_err(|e| e.to_string())?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Long Git jobs use their own WAL connection so transcript persistence and
+    /// cancellation are not held behind a checkout or status scan.
+    pub(crate) fn open_auxiliary_conn(&self) -> Result<Connection, String> {
+        let path = self
+            .lock_conn()?
+            .path()
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .ok_or("Session store has no database path")?;
+        let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| e.to_string())?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(|e| e.to_string())?;
+        Ok(conn)
     }
 
     pub(crate) fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
@@ -623,7 +642,9 @@ fn upsert_session(conn: &Connection, session: &SessionUpsert) -> rusqlite::Resul
         .as_ref()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
-    let git = crate::fs::git_info_for(&crate::fs::expand_home(&session.cwd));
+    let git = crate::fs::git_info_for(&crate::fs::expand_home(
+        session.worktree_cwd.as_deref().unwrap_or(&session.cwd),
+    ));
     let branch = session
         .branch
         .as_deref()
@@ -1074,12 +1095,32 @@ fn optional_json(raw: Option<String>) -> Option<Value> {
     raw.and_then(|value| serde_json::from_str(&value).ok())
 }
 
+fn touch_session_worktree(conn: &Connection, session_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE managed_worktrees SET last_used = ?1 WHERE id = ?2 OR EXISTS
+         (SELECT 1 FROM sessions WHERE id = ?2 AND
+          (COALESCE(worktree_cwd, cwd) = managed_worktrees.path OR
+           substr(COALESCE(worktree_cwd, cwd), 1, length(managed_worktrees.path) + 1)
+             = managed_worktrees.path || '/'))",
+        params![
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+            session_id
+        ],
+    )?;
+    Ok(())
+}
+
 fn delete_session(conn: &Connection, session_id: &str) -> rusqlite::Result<()> {
+    touch_session_worktree(conn, session_id)?;
     conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
     Ok(())
 }
 
 fn set_archived(conn: &Connection, session_id: &str, archived: bool) -> rusqlite::Result<()> {
+    touch_session_worktree(conn, session_id)?;
     conn.execute(
         "UPDATE sessions SET archived = ?1 WHERE id = ?2",
         params![if archived { 1 } else { 0 }, session_id],
@@ -1999,5 +2040,29 @@ mod tests {
         .unwrap();
         assert!(result.hits.is_empty());
         assert!(!result.truncated);
+    }
+    #[test]
+    fn archiving_and_deleting_shared_subfolder_sessions_restart_worktree_retention() {
+        let store = SessionStore::open_in_memory().unwrap();
+        let conn = store.lock_conn().unwrap();
+        conn.execute("INSERT INTO managed_worktrees (id, repo, common_dir, path, branch, base_ref, last_used)
+            VALUES ('owner', '/repo', '/repo/.git', '/managed/checkout', 'feature', 'main', 0)", []).unwrap();
+        let mut session = sample("shared", "/repo/packages/app", "Shared checkout");
+        session.worktree_cwd = Some("/managed/checkout/packages/app".into());
+        upsert_session(&conn, &session).unwrap();
+        set_archived(&conn, "shared", true).unwrap();
+        let touched = || {
+            conn.query_row::<i64, _, _>(
+                "SELECT last_used FROM managed_worktrees WHERE id = 'owner'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert!(touched() > 0);
+        conn.execute("UPDATE managed_worktrees SET last_used = 0", [])
+            .unwrap();
+        delete_session(&conn, "shared").unwrap();
+        assert!(touched() > 0);
     }
 }
