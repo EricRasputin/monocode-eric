@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { recoverCursorSubagents } from "./harness/cursorSubagents";
 import { persistableAttachment } from "./attachments";
 import type { ContextUsage } from "./contextUsage";
 import { normalizeProjectPath } from "./recents";
@@ -276,7 +277,7 @@ export async function getSession(sessionId: string): Promise<Session | null> {
     sessionId,
   });
   if (!record) return null;
-  return recordToSession(record);
+  return recoverCursorSubagents(recordToSession(record));
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -498,6 +499,9 @@ function sanitizeAgentRun(value: unknown): AgentRunMeta | null {
   if (!name && steps.length === 0) return null;
   return {
     name: name || "Subagent",
+    ...(typeof record.model === "string" && record.model.trim()
+      ? { model: record.model.trim() }
+      : {}),
     ...(typeof record.agentType === "string" && record.agentType.trim()
       ? { agentType: record.agentType.trim() }
       : {}),

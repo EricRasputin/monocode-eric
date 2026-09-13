@@ -2611,7 +2611,6 @@ function SessionCard({
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
               {linkedUpdateDot}
-              {workItemBadge}
               {status}
             </span>
           </span>
@@ -2633,7 +2632,6 @@ function SessionCard({
           {compact ? (
             <span className="flex shrink-0 items-center gap-1.5">
               {linkedUpdateDot}
-              {workItemBadge}
               {status}
             </span>
           ) : null}
@@ -2647,39 +2645,28 @@ function SessionCard({
           ) : (
             <span className="min-w-0 flex-1" />
           )}
-          <span
-            className={`flex shrink-0 items-center gap-1.5 ${
-              onArchive
-                ? "transition-[padding] group-focus-within:pl-5 group-hover:pl-5"
-                : ""
-            }`}
-          >
-            <HarnessIcon
-              harness={session.harness}
-              className="size-3.5 shrink-0"
-            />
+          <span className="flex shrink-0 items-center gap-1">
+            {onArchive ? (
+              <button
+                type="button"
+                data-no-drag
+                data-tauri-drag-region="false"
+                title={archiveLabel}
+                aria-label={`${archiveLabel} ${title}`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onArchive();
+                }}
+                className="pointer-events-none grid size-5 place-items-center rounded-md text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
+              >
+                <Archive className="size-3 shrink-0" strokeWidth={1.75} />
+              </button>
+            ) : null}
+            {workItemBadge}
           </span>
         </span>
       </div>
-      {onArchive ? (
-        <button
-          type="button"
-          data-no-drag
-          data-tauri-drag-region="false"
-          title={archiveLabel}
-          aria-label={`${archiveLabel} ${title}`}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onArchive();
-          }}
-          className={`pointer-events-none absolute right-7 grid size-5 place-items-center rounded text-content/50 opacity-0 transition-opacity hover:bg-content/10 hover:text-content group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 ${
-            compact ? "bottom-[5px]" : "bottom-[7px]"
-          }`}
-        >
-          <Archive className="size-3.5" strokeWidth={1.75} />
-        </button>
-      ) : null}
     </div>
   );
 }
