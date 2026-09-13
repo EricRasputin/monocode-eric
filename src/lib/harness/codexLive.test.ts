@@ -117,6 +117,122 @@ describe("codex live turn sequence", () => {
     __codexTestReset();
   });
 
+  it("counts every request in a turn without counting repeated usage snapshots", async () => {
+    const usage = (input: number, output: number, cached: number) => ({
+      inputTokens: input,
+      outputTokens: output,
+      cachedInputTokens: cached,
+      totalTokens: input + output,
+    });
+    const { events, turn } = await startTurn("codex-live", {
+      resume: true,
+      beforeThreadReply: async () => {
+        notify("thread/tokenUsage/updated", {
+          threadId: "thr_1",
+          turnId: "previous-turn",
+          tokenUsage: {
+            last: usage(100, 20, 40),
+            total: usage(1000, 200, 400),
+          },
+        });
+      },
+    });
+    notify("thread/tokenUsage/updated", {
+      threadId: "thr_1",
+      turnId: "turn_1",
+      tokenUsage: {
+        last: usage(100, 20, 40),
+        total: usage(1100, 220, 440),
+        modelContextWindow: 200_000,
+      },
+    });
+    const second = {
+      threadId: "thr_1",
+      turnId: "turn_1",
+      tokenUsage: {
+        last: usage(200, 30, 100),
+        total: usage(1300, 250, 540),
+        modelContextWindow: 200_000,
+      },
+    };
+    notify("thread/tokenUsage/updated", second);
+    notify("thread/tokenUsage/updated", second);
+    notify("turn/completed", { turn: { id: "turn_1", status: "completed" } });
+    await turn;
+    expect(
+      events.filter((event) => event.type === "turn.metrics").at(-1),
+    ).toMatchObject({
+      inputTokens: 300,
+      outputTokens: 50,
+      cacheReadTokens: 140,
+      cacheHitPercent: (140 / 300) * 100,
+    });
+    expect(
+      events.filter((event) => event.type === "context").at(-1),
+    ).toMatchObject({ used: 230, window: 200_000 });
+
+    const nextTurn = sendCodexTurn({
+      sessionId: "codex-live",
+      cwd: "/repo",
+      model: "codex:gpt-5.4",
+      modelSettings: {},
+      runtimeMode: "supervised",
+      text: "Follow up",
+      attachments: [],
+      onEvent: (event) => events.push(event),
+    });
+    await waitFor(
+      () => parse().filter((m) => m.method === "turn/start").length === 2,
+      "second turn",
+    );
+    reply(
+      parse()
+        .filter((m) => m.method === "turn/start")
+        .at(-1)!.id as number,
+      {
+        turn: { id: "turn_2", status: "inProgress" },
+      },
+    );
+    notify("turn/started", { turn: { id: "turn_2", status: "inProgress" } });
+    notify("thread/tokenUsage/updated", second); // Late previous-turn snapshot.
+    notify("thread/tokenUsage/updated", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      tokenUsage: { last: usage(50, 10, 0), total: usage(1350, 260, 540) },
+    });
+    notify("turn/completed", { turn: { id: "turn_2", status: "completed" } });
+    await nextTurn;
+    expect(
+      events.filter((event) => event.type === "turn.metrics").at(-1),
+    ).toMatchObject({
+      inputTokens: 50,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheHitPercent: 0,
+    });
+  });
+
+  it("keeps context but omits unverified turn spend when a resumed thread has no usage replay", async () => {
+    const { events, turn } = await startTurn("codex-live", { resume: true });
+    notify("thread/tokenUsage/updated", {
+      threadId: "thr_1",
+      turnId: "turn_1",
+      tokenUsage: {
+        last: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+        total: { inputTokens: 1100, outputTokens: 220, totalTokens: 1320 },
+        modelContextWindow: 200_000,
+      },
+    });
+    notify("turn/completed", { turn: { id: "turn_1", status: "completed" } });
+    await turn;
+    expect(events.filter((event) => event.type === "turn.metrics")).toEqual([]);
+    expect(events).toContainEqual({
+      type: "context",
+      used: 120,
+      window: 200_000,
+    });
+  });
+
   it("keeps retries and HTTP fallback out of a successful turn's transcript", async () => {
     const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
     const { events, turn } = await startTurn("codex-live");

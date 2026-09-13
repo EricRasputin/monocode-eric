@@ -1,6 +1,7 @@
 import { nativeModelId } from "../models";
 import { taskListFromToolInput } from "../taskList";
 import { normalizeProjectPath } from "../recents";
+import type { TurnMetrics } from "../session";
 import type { UserQuestionReply } from "../userQuestion";
 import type {
   CommandContext,
@@ -112,6 +113,7 @@ type Live = {
   activeTurn: boolean;
   emittedAssistant: string;
   emittedReasoning: string;
+  messageMetrics: TurnMetrics[];
   /** Reason the turn failed, held until we know it is not being retried. */
   turnError: string | null;
 };
@@ -485,6 +487,7 @@ async function startLive(
     activeTurn: false,
     emittedAssistant: "",
     emittedReasoning: "",
+    messageMetrics: [],
     turnError: null,
   };
   liveRef.current = live;
@@ -559,6 +562,7 @@ async function runTurn(
   live.emittedAssistant = "";
   live.emittedReasoning = "";
   live.turnError = null;
+  live.messageMetrics = [];
   live.toolsByIndex.clear();
   live.toolsById.clear();
   live.compacting = false;
@@ -747,8 +751,39 @@ function handleFrame(
 
   const context = contextFromUsage(rec, live.contextWindow);
   if (context) live.onEvent({ type: "context", ...context });
+  if (type === "message_start" && asRecord(rec.message)?.role === "assistant") {
+    live.messageMetrics.push({});
+  }
   const metrics = turnMetricsFromUsage(rec);
-  if (metrics) live.onEvent({ type: "turn.metrics", ...metrics });
+  if (metrics && live.activeTurn && type !== "turn_end") {
+    // Streaming and final events describe the same assistant request. Replace
+    // its slot; `turn_end` repeats the final message and must not add usage.
+    const index = Math.max(0, live.messageMetrics.length - 1);
+    live.messageMetrics[index] = metrics;
+    const total = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    };
+    for (const message of live.messageMetrics) {
+      for (const field of Object.keys(total) as Array<keyof typeof total>) {
+        total[field] += message[field] ?? 0;
+      }
+    }
+    const cacheable =
+      total.inputTokens + total.cacheReadTokens + total.cacheWriteTokens;
+    const cacheReported = live.messageMetrics.some(
+      (message) => message.cacheHitPercent != null,
+    );
+    live.onEvent({
+      type: "turn.metrics",
+      ...total,
+      ...(cacheReported && cacheable > 0
+        ? { cacheHitPercent: (total.cacheReadTokens / cacheable) * 100 }
+        : {}),
+    });
+  }
 
   const delta = assistantDeltaFromEvent(rec);
   if (delta) {

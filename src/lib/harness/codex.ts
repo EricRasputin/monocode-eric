@@ -1,5 +1,5 @@
 import { nativeModelId } from "../models";
-import type { RuntimeMode } from "../session";
+import type { RuntimeMode, TurnMetrics } from "../session";
 import { questionPromptTitle, type UserQuestionReply } from "../userQuestion";
 import {
   killChild,
@@ -17,6 +17,7 @@ import {
   mapApprovalRequest,
   codexSubagentStates,
   codexSubagentThreadIds,
+  codexMetricsDifference,
   mapCodexNotification,
   mapCodexSubagentSteps,
   stringField,
@@ -83,6 +84,8 @@ type Live = {
   turnEndPending: boolean;
   emittedAssistant: string;
   emittedReasoning: string;
+  metricsBaseline: TurnMetrics | null;
+  lastTokenMetrics: TurnMetrics | null;
   /** Child thread id -> the agent tool row that spawned it. */
   subagentThreads: Map<string, string>;
   /** Child notifications that arrived before their row was known. */
@@ -325,13 +328,30 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
 
   const { path } = await resolveCodexBinaryImpl();
   const liveRef: { current: Live | null } = { current: null };
+  const replayedMetrics = new Map<string, TurnMetrics>();
 
   const rpc = new JsonRpcClient(
     input.sessionId,
     {
       onNotification: (method, params) => {
         const live = liveRef.current;
-        if (!live || live.muteUpdates) return;
+        if (!live || live.muteUpdates) {
+          // Resume can replay counters before thread/resume returns. Capture
+          // only usage metadata, without replaying history into the transcript.
+          if (method === "thread/tokenUsage/updated") {
+            const threadId = stringField(asRecord(params), "threadId");
+            const metrics = mapCodexNotification(
+              method,
+              params,
+            ).totalTokenMetrics;
+            if (threadId && metrics) {
+              if (!live) replayedMetrics.set(threadId, metrics);
+              else if (threadId === live.threadId)
+                live.lastTokenMetrics = metrics;
+            }
+          }
+          return;
+        }
         handleNotification(live, method, params);
       },
       onRequest: (id, method, params) => {
@@ -466,6 +486,8 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
       turnEndPending: false,
       emittedAssistant: "",
       emittedReasoning: "",
+      metricsBaseline: null,
+      lastTokenMetrics: replayedMetrics.get(threadId) ?? (didResume ? null : {}),
       subagentThreads: new Map(),
       pendingSubagent: new Map(),
       openAgentRows: new Map(),
@@ -511,6 +533,7 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
 
   live.emittedAssistant = "";
   live.emittedReasoning = "";
+  live.metricsBaseline = live.lastTokenMetrics;
 
   const turnPromise = new Promise<void>((resolve, reject) => {
     live.turnDone = resolve;
@@ -545,6 +568,7 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
 async function runCompaction(live: Live): Promise<void> {
   live.emittedAssistant = "";
   live.emittedReasoning = "";
+  live.metricsBaseline = live.lastTokenMetrics;
   const turnPromise = new Promise<void>((resolve, reject) => {
     live.turnDone = resolve;
     live.turnFailed = reject;
@@ -594,11 +618,16 @@ function handleNotification(live: Live, method: string, params: unknown): void {
     handleSubagentNotification(live, threadId, method, params);
     return;
   }
+  if (method === "thread/tokenUsage/updated") {
+    const turnId = stringField(rec, "turnId");
+    if (turnId && live.activeTurnId && turnId !== live.activeTurnId) return;
+  }
   // A Codex turn is a sequence of items. Completing an agentMessage does not
   // mean the turn is over — more tools and messages can still arrive. Only
   // turn/completed (and turn/aborted) settle sendCodexTurn, which is what the
   // UI uses for busy / stop / "Working for".
   const mapped = mapCodexNotification(method, params);
+  if (mapped.totalTokenMetrics) live.lastTokenMetrics = mapped.totalTokenMetrics;
   if (mapped.diagnostic) {
     console.debug(
       `[monocode] codex ${live.threadId} ${method}`,
@@ -610,7 +639,25 @@ function handleNotification(live: Live, method: string, params: unknown): void {
   // would otherwise stand up a second agent that never does anything.
   const duplicate = bindSubagentThreads(live, method, rec);
   const snapshot = method === "item/completed";
-  for (const event of mapped.events) {
+  for (let event of mapped.events) {
+    if (event.type === "turn.metrics") {
+      // A resumed thread without replay has no verifiable pre-turn baseline.
+      // Keep its context meter, but never label lifetime spend as turn usage.
+      if (!live.turnDone || !mapped.totalTokenMetrics || !live.metricsBaseline)
+        continue;
+      const metrics = codexMetricsDifference(
+        mapped.totalTokenMetrics,
+        live.metricsBaseline,
+      );
+      if (!metrics) {
+        live.metricsBaseline = null;
+        continue;
+      }
+      event = {
+        type: "turn.metrics",
+        ...metrics,
+      };
+    }
     if (duplicate && duplicateAgentRow(event)) continue;
     trackAgentRow(live, event);
     if (event.type === "message.delta") {
