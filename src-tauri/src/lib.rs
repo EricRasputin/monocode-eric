@@ -271,7 +271,6 @@ pub fn run() {
             worktrees::setup::worktree_setup,
             worktrees::worktree_heartbeat,
             worktrees::worktree_pin,
-            worktrees::worktree_cleanup,
             worktrees::worktree_retirement_plan,
             worktrees::worktree_retire,
             fs::git_branches,

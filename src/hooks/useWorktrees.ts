@@ -58,7 +58,7 @@ export function refreshWorktrees(cwd: string) {
   return refresh(entryFor(cwd));
 }
 
-/** Shared read-only inspection; this timer can suggest cleanup but never removes anything. */
+/** Share the inventory across consumers and refresh it when Git or focus changes. */
 export function useWorktrees(cwd: string, enabled = true): Snapshot {
   const active = enabled && !!cwd && cwd !== "~";
   const subscribe = useCallback(

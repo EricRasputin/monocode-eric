@@ -5,7 +5,6 @@ import {
   heartbeatWorktrees,
   prepareSessionWorktree,
   protectedWorktreePaths,
-  type WorktreeEntry,
   type WorktreeRetirementPlan,
 } from "./lib/worktrees";
 import {
@@ -1553,9 +1552,9 @@ export default function App({
   ]);
 
   const onOpenWorktree = useCallback(
-    async (cwd: string, entry: WorktreeEntry) => {
+    async (cwd: string, worktreeCwd: string) => {
       const existing = sessionsRef.current.find((session) =>
-        sameProjectPath(sessionWorkCwd(session), entry.path),
+        sameProjectPath(sessionWorkCwd(session), worktreeCwd),
       );
       const tab =
         existing &&
@@ -1566,14 +1565,14 @@ export default function App({
         // Restore even when a draft already points at this checkout.
         const preparedPath = await prepareSessionWorktree({
           ...existing,
-          worktreeCwd: entry.path,
+          worktreeCwd,
         });
         setSessions((previous) =>
           previous.map((session) =>
             session.id === existing.id
               ? {
                   ...session,
-                  worktreeCwd: preparedPath ?? entry.path,
+                  worktreeCwd: preparedPath ?? worktreeCwd,
                   workspaceChoice: undefined,
                 }
               : session,
@@ -1592,9 +1591,12 @@ export default function App({
         return;
       }
       const session = newDefaultSession(cwd);
-      const prepared = { ...session, worktreeCwd: entry.path };
-      const worktreeCwd = await prepareSessionWorktree(prepared);
-      const next = { ...prepared, worktreeCwd: worktreeCwd ?? entry.path };
+      const prepared = { ...session, worktreeCwd };
+      const preparedCwd = await prepareSessionWorktree(prepared);
+      const next = {
+        ...prepared,
+        worktreeCwd: preparedCwd ?? prepared.worktreeCwd,
+      };
       const nextTab = newTab(next.id);
       setSessions((previous) => [...previous, next]);
       appendTab(nextTab, cwd);

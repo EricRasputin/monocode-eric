@@ -138,8 +138,6 @@ fn protected_windows(
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeSettings {
     pub isolate_by_default: bool,
-    pub auto_cleanup: bool,
-    pub retention_days: i64,
     #[serde(flatten)]
     pub environment: environment::EnvironmentSettings,
 }
@@ -148,8 +146,6 @@ impl Default for WorktreeSettings {
     fn default() -> Self {
         Self {
             isolate_by_default: true,
-            auto_cleanup: false,
-            retention_days: 7,
             environment: environment::EnvironmentSettings::default(),
         }
     }
@@ -205,11 +201,11 @@ pub struct WorktreeOverview {
     pub entries: Vec<WorktreeEntry>,
 }
 
-#[derive(Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CleanupReport {
-    pub removed: Vec<String>,
-    pub skipped: Vec<String>,
+#[cfg(test)]
+#[derive(Default)]
+struct CleanupReport {
+    removed: Vec<String>,
+    skipped: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -602,14 +598,12 @@ fn settings(conn: &Connection, cwd: &str) -> Result<WorktreeSettings, String> {
     let decode = |row: &rusqlite::Row<'_>| {
         Ok(WorktreeSettings {
             isolate_by_default: row.get(0)?,
-            auto_cleanup: false,
-            retention_days: row.get(1)?,
             environment: environment::EnvironmentSettings::default(),
         })
     };
     let current = conn
         .query_row(
-            "SELECT isolate_by_default, retention_days FROM worktree_project_settings
+            "SELECT isolate_by_default FROM worktree_project_settings
           WHERE common_dir = ?1 AND project_path = ?2",
             params![scope.common, scope.relative],
             decode,
@@ -620,11 +614,15 @@ fn settings(conn: &Connection, cwd: &str) -> Result<WorktreeSettings, String> {
     // starts independently and never inherits another project's policy.
     let mut settings = match current {
         Some(settings) => settings,
-        None if scope.relative.is_empty() => conn.query_row(
-            "SELECT isolate_by_default, retention_days FROM worktree_settings WHERE common_dir = ?1",
-            [&scope.common],
-            decode,
-        ).optional().map_err(|error| error.to_string())?.unwrap_or_default(),
+        None if scope.relative.is_empty() => conn
+            .query_row(
+                "SELECT isolate_by_default FROM worktree_settings WHERE common_dir = ?1",
+                [&scope.common],
+                decode,
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .unwrap_or_default(),
         None => WorktreeSettings::default(),
     };
     settings.environment = environment::load_settings(conn, &scope)?;
@@ -1088,15 +1086,15 @@ fn remote_default_branch(root: &Path, target: &str) -> Result<Option<String>, St
     }))
 }
 
-type TrackingRemote = (
-    String,
-    String,
-    String,
-    String,
-    bool,
-    Option<String>,
-    Option<String>,
-);
+struct TrackingRemote {
+    name: String,
+    branch: String,
+    destination: String,
+    url: String,
+    allowed: bool,
+    reason: Option<String>,
+    expected_oid: Option<String>,
+}
 
 fn tracking_remote(
     root: &Path,
@@ -1113,64 +1111,64 @@ fn tracking_remote(
     let configured_merge = match optional_git(root, &["config", "--get", &merge_key]) {
         Ok(Some(value)) => value,
         Ok(None) => {
-            return Some((
-                remote,
-                branch.into(),
-                String::new(),
-                String::new(),
-                false,
-                Some("Tracking branch is not configured".into()),
-                None,
-            ))
+            return Some(TrackingRemote {
+                name: remote,
+                branch: branch.into(),
+                destination: String::new(),
+                url: String::new(),
+                allowed: false,
+                reason: Some("Tracking branch is not configured".into()),
+                expected_oid: None,
+            })
         }
         Err(error) => {
-            return Some((
-                remote,
-                branch.into(),
-                String::new(),
-                String::new(),
-                false,
-                Some(error),
-                None,
-            ))
+            return Some(TrackingRemote {
+                name: remote,
+                branch: branch.into(),
+                destination: String::new(),
+                url: String::new(),
+                allowed: false,
+                reason: Some(error),
+                expected_oid: None,
+            })
         }
     };
     let Some(remote_branch) = configured_merge.strip_prefix("refs/heads/") else {
-        return Some((
-            remote,
-            branch.into(),
-            String::new(),
-            String::new(),
-            false,
-            Some("Tracking destination is not a branch".into()),
-            None,
-        ));
+        return Some(TrackingRemote {
+            name: remote,
+            branch: branch.into(),
+            destination: String::new(),
+            url: String::new(),
+            allowed: false,
+            reason: Some("Tracking destination is not a branch".into()),
+            expected_oid: None,
+        });
     };
     let remote_url = match remote_push_url(root, &remote) {
         Ok(value) => value,
         Err(error) => {
-            return Some((
-                remote,
-                remote_branch.into(),
-                String::new(),
-                String::new(),
-                false,
-                Some(error),
-                None,
-            ))
+            return Some(TrackingRemote {
+                name: remote,
+                branch: remote_branch.into(),
+                destination: String::new(),
+                url: String::new(),
+                allowed: false,
+                reason: Some(error),
+                expected_oid: None,
+            })
         }
     };
     let destination = safe_remote_destination(&remote_url);
     if remote_branch != branch {
-        return Some((
-            remote,
-            remote_branch.into(),
+        return Some(TrackingRemote {
+            name: remote,
+            branch: remote_branch.into(),
             destination,
-            remote_url,
-            false,
-            Some("Tracking destination does not match the owned branch".into()),
-            None,
-        ));
+            url: remote_url,
+            allowed: false,
+            reason: Some("Tracking destination does not match the owned branch".into()),
+            expected_oid: None,
+        });
     }
     match remote_oid(root, &remote_url, remote_branch) {
         Ok(Some(oid)) => {
@@ -1228,34 +1226,34 @@ fn tracking_remote(
                     "Remote branch tip is not confirmed integrated into the recorded base".into()
                 }
             });
-            Some((
-                remote,
-                remote_branch.into(),
+            Some(TrackingRemote {
+                name: remote,
+                branch: remote_branch.into(),
                 destination,
-                remote_url,
+                url: remote_url,
                 allowed,
                 reason,
-                Some(oid),
-            ))
+                expected_oid: Some(oid),
+            })
         }
-        Ok(None) => Some((
-            remote,
-            remote_branch.into(),
+        Ok(None) => Some(TrackingRemote {
+            name: remote,
+            branch: remote_branch.into(),
             destination,
-            remote_url,
-            false,
-            Some("Remote branch is already absent".into()),
-            None,
-        )),
-        Err(error) => Some((
-            remote,
-            remote_branch.into(),
+            url: remote_url,
+            allowed: false,
+            reason: Some("Remote branch is already absent".into()),
+            expected_oid: None,
+        }),
+        Err(error) => Some(TrackingRemote {
+            name: remote,
+            branch: remote_branch.into(),
             destination,
-            remote_url,
-            false,
-            Some(format!("Remote unavailable: {error}")),
-            None,
-        )),
+            url: remote_url,
+            allowed: false,
+            reason: Some(format!("Remote unavailable: {error}")),
+            expected_oid: None,
+        }),
     }
 }
 
@@ -1387,14 +1385,14 @@ fn review_retirement(
         mut remote_reason,
         remote_expected_oid,
     ) = match remote {
-        Some((name, branch, destination, url, allowed, reason, oid)) => (
-            Some(name),
-            Some(branch),
-            Some(destination),
-            Some(url),
-            allowed,
-            reason,
-            oid,
+        Some(remote) => (
+            Some(remote.name),
+            Some(remote.branch),
+            Some(remote.destination),
+            Some(remote.url),
+            remote.allowed,
+            remote.reason,
+            remote.expected_oid,
         ),
         None => (None, None, None, None, false, None, None),
     };
@@ -2872,45 +2870,12 @@ fn execute_retirement(
     plan_id: &str,
     selections: &[WorktreeRetirementSelection],
 ) -> Result<WorktreeRetirementReport, String> {
-    let exists: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM worktree_retirement_plans WHERE plan_id = ?1)",
-            [plan_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    if !exists {
-        return Err("Retirement plan was not found; review the worktrees again".into());
-    }
-    let mut deduped: Vec<WorktreeRetirementSelection> = Vec::new();
-    let mut positions: HashMap<String, usize> = HashMap::new();
-    for selection in selections {
-        if let Some(index) = positions.get(&selection.id).copied() {
-            let existing = &mut deduped[index];
-            existing.delete_local_branch |= selection.delete_local_branch;
-            existing.delete_remote_branch |= selection.delete_remote_branch;
-        } else {
-            positions.insert(selection.id.clone(), deduped.len());
-            deduped.push(selection.clone());
-        }
-    }
-    let mut results = Vec::new();
-    for selection in deduped {
-        let Some(snapshot) = load_retirement_snapshot(conn, plan_id, &selection.id)? else {
-            results.push(WorktreeRetirementResult {
-                id: selection.id,
-                path: String::new(),
-                worktree_removed: false,
-                local_branch_deleted: false,
-                remote_branch_deleted: false,
-                recovery_ref: None,
-                error: Some("Worktree was not part of the reviewed plan".into()),
-            });
-            continue;
-        };
-        results.push(execute_retirement_item(conn, windows, snapshot, &selection));
-    }
-    Ok(WorktreeRetirementReport { results })
+    let host = WorktreeHost {
+        root: PathBuf::new(),
+        windows: Mutex::new(windows.clone()),
+        repositories: RepositoryReservations::default(),
+    };
+    execute_retirement_coordinated_with(conn, &host, plan_id, selections, |windows| windows.clone())
 }
 
 fn persist_retirement_selection(
@@ -3220,70 +3185,6 @@ fn execute_retirement_coordinated_with(
         ));
     }
     Ok(WorktreeRetirementReport { results })
-}
-
-fn cleanup_coordinated(
-    app: &AppHandle,
-    conn: &Connection,
-    host: &WorktreeHost,
-    common: &str,
-    ids: &[String],
-) -> Result<CleanupReport, String> {
-    let mut report = CleanupReport::default();
-    for entry in owned(conn)? {
-        if entry.removed || entry.common != common || !ids.contains(&entry.id) {
-            continue;
-        }
-        let _repository = host.repository_guard(&entry.common)?;
-        let windows = {
-            let windows = host.operation_guard()?;
-            protected_windows(app, &windows)
-        };
-        let reason = match blocked(conn, &windows, &entry) {
-            Ok(reason) => reason,
-            Err(error) => Some(error),
-        };
-        if let Some(reason) = reason {
-            report.skipped.push(format!("{}: {reason}", entry.branch));
-            continue;
-        }
-
-        let plan_id = plan_id();
-        let snapshot = match review_retirement(conn, &windows, &entry, &plan_id) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                report.skipped.push(format!("{}: {error}", entry.branch));
-                continue;
-            }
-        };
-        if let Err(error) = persist_retirement_plan(conn, &plan_id, std::slice::from_ref(&snapshot))
-        {
-            report.skipped.push(format!("{}: {error}", entry.branch));
-            continue;
-        }
-        let result = {
-            let windows = host.operation_guard()?;
-            execute_retirement_item(
-                conn,
-                &protected_windows(app, &windows),
-                snapshot,
-                &WorktreeRetirementSelection {
-                    id: entry.id.clone(),
-                    delete_local_branch: false,
-                    delete_remote_branch: false,
-                },
-            )
-        };
-        match result.error {
-            Some(error) => report.skipped.push(format!("{}: {error}", entry.branch)),
-            None if result.worktree_removed => report.removed.push(entry.path),
-            None => report.skipped.push(format!(
-                "{}: Git did not remove the worktree completely",
-                entry.branch
-            )),
-        }
-    }
-    Ok(report)
 }
 
 #[cfg(test)]
@@ -3939,30 +3840,22 @@ fn update_settings(
     cwd: &str,
     settings: WorktreeSettings,
 ) -> Result<WorktreeSettings, String> {
-    if !(1..=365).contains(&settings.retention_days) {
-        return Err("Retention must be between 1 and 365 days".into());
-    }
     let scope = environment::scope_for_cwd(cwd)?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     let environment = environment::save_settings(&tx, &scope, &settings.environment)?;
+    // Older databases require retention_days. Keep a compatibility value in
+    // that column; retirement is always explicitly reviewed and has no timer.
     tx.execute(
         "INSERT INTO worktree_project_settings
            (common_dir, project_path, isolate_by_default, retention_days)
-         VALUES (?1, ?2, ?3, ?4)
+         VALUES (?1, ?2, ?3, 7)
          ON CONFLICT(common_dir, project_path) DO UPDATE SET
-           isolate_by_default = excluded.isolate_by_default,
-           retention_days = excluded.retention_days",
-        params![
-            scope.common,
-            scope.relative,
-            settings.isolate_by_default,
-            settings.retention_days
-        ],
+           isolate_by_default = excluded.isolate_by_default",
+        params![scope.common, scope.relative, settings.isolate_by_default],
     )
     .map_err(|error| error.to_string())?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(WorktreeSettings {
-        auto_cleanup: false,
         environment,
         ..settings
     })
@@ -4161,21 +4054,6 @@ pub fn worktree_pin(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[tauri::command(async)]
-pub fn worktree_cleanup(
-    app: AppHandle,
-    store: State<'_, SessionStore>,
-    host: State<'_, WorktreeHost>,
-    cwd: String,
-    ids: Vec<String>,
-) -> Result<CleanupReport, String> {
-    let common = repository_common(&cwd)?;
-    let result = cleanup_coordinated(&app, &store.open_auxiliary_conn()?, &host, &common, &ids);
-    let _ = app.emit("worktree-storage-changed", ());
-    storage_maintenance::schedule(&app);
-    result
 }
 
 /// Build and persist a review snapshot. `session_ids` is used by the archive
@@ -4629,7 +4507,7 @@ mod tests {
             )
             .unwrap();
         let list = overview(&fixture.conn, &HashMap::new(), &entry.path).unwrap();
-        assert!(!list.settings.auto_cleanup);
+        assert!(list.settings.isolate_by_default);
         assert!(list
             .entries
             .iter()

@@ -42,8 +42,6 @@ function currentSettings(cwd: string): WorktreeSettings {
   return (
     projectSettings.get(cwd) ?? {
       isolateByDefault: true,
-      autoCleanup: false,
-      retentionDays: 7,
     }
   );
 }
@@ -511,7 +509,11 @@ function Preview() {
           onArchiveSession={() => {}}
           onDeleteSession={() => {}}
           onOpenWhatsNew={() => {}}
-          onOpenWorktree={async (cwd, entry) => {
+          onOpenWorktree={async (cwd, worktreeCwd) => {
+            const entry = currentEntries(cwd).find(
+              (candidate) => candidate.path === worktreeCwd,
+            );
+            if (!entry) return;
             if (entry.missing) {
               restorationComplete = true;
               setNotice(

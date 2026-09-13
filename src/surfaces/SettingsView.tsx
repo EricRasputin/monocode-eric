@@ -1,5 +1,4 @@
 import { WorktreeManager } from "../chrome/WorktreeManager";
-import type { WorktreeEntry } from "../lib/worktrees";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDownCircle,
@@ -227,7 +226,7 @@ type Props = {
   onRestoreProject?: (path: string) => void;
   onDeleteProject?: (path: string) => void;
   onOpenWhatsNew: (version: string) => void;
-  onOpenWorktree: (cwd: string, entry: WorktreeEntry) => Promise<void>;
+  onOpenWorktree: (cwd: string, worktreeCwd: string) => Promise<void>;
 };
 
 export function SettingsView({

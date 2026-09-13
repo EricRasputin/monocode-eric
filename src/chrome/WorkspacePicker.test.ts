@@ -12,8 +12,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../hooks/useWorktrees", () => ({
-  useWorktrees: () => ({
+  useWorktrees: (cwd: string) => ({
     overview: {
+      repo: "/repo",
+      projectCwd: cwd,
       settings: { isolateByDefault: true },
       entries: [
         { path: "/repo", branch: "main", main: true },
@@ -121,6 +123,30 @@ describe("composer workspace choice", () => {
     await prepareSessionWorktree(latest);
     expect(invoke).toHaveBeenLastCalledWith("worktree_prepare", {
       request: expect.objectContaining({ createNew: false, path: "/existing" }),
+    });
+  });
+  it("keeps a nested project cwd when choosing an existing worktree", async () => {
+    await act(async () =>
+      root.render(
+        createElement(Harness, {
+          initial: newSession("claude", "/repo/apps/web"),
+        }),
+      ),
+    );
+    await act(async () => button("Workspace: New worktree").click());
+    await act(async () => button("feature/existing").click());
+
+    expect(latest.workspaceChoice).toEqual({
+      mode: "local",
+      path: "/existing/apps/web",
+    });
+    await prepareSessionWorktree(latest);
+    expect(invoke).toHaveBeenLastCalledWith("worktree_prepare", {
+      request: expect.objectContaining({
+        cwd: "/repo/apps/web",
+        createNew: false,
+        path: "/existing/apps/web",
+      }),
     });
   });
   it("keeps an established conversation bound to its checkout", async () => {

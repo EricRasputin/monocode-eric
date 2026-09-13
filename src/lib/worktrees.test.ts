@@ -5,6 +5,7 @@ import {
   prepareSessionWorktree,
   protectedWorktreePaths,
   shouldIsolateSession,
+  worktreeProjectPath,
 } from "./worktrees";
 import { newSession, sessionWorkCwd } from "./session";
 import { newTab } from "./layout";
@@ -19,6 +20,27 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => vi.clearAllMocks());
 
 describe("worktree session lifecycle", () => {
+  it("projects a selected nested project into another checkout", () => {
+    expect(
+      worktreeProjectPath(
+        { repo: "/repo", projectCwd: "/repo/apps/web" },
+        "/managed/worktree",
+      ),
+    ).toBe("/managed/worktree/apps/web");
+    expect(
+      worktreeProjectPath(
+        { repo: "/repo", projectCwd: "/repo" },
+        "/managed/worktree",
+      ),
+    ).toBe("/managed/worktree");
+    expect(
+      worktreeProjectPath(
+        { repo: "/repo", projectCwd: "/repo/apps/web " },
+        "/managed/worktree",
+      ),
+    ).toBe("/managed/worktree/apps/web ");
+  });
+
   it("isolates new conversations and retries failed setup without moving bound providers", () => {
     const session = newSession("claude", "/repo");
     expect(shouldIsolateSession(session)).toBe(true);

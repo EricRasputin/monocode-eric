@@ -2,11 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Session } from "./session";
 import type { WorkspaceTab } from "./layout";
 import type { ProjectTerminalDock } from "./projectTerminal";
+import { rebasePath } from "./paths";
 
 export type WorktreeSettings = {
   isolateByDefault: boolean;
-  autoCleanup: boolean;
-  retentionDays: number;
   setupCommand?: string;
   copyPaths?: string[];
   disposablePaths?: string[];
@@ -40,7 +39,17 @@ export type WorktreeOverview = {
   entries: WorktreeEntry[];
 };
 
-export type CleanupReport = { removed: string[]; skipped: string[] };
+/** Keep a nested project's relative location when it moves to another checkout. */
+export function worktreeProjectPath(
+  overview: Pick<WorktreeOverview, "repo" | "projectCwd">,
+  checkoutPath: string,
+): string {
+  return rebasePath(
+    overview.projectCwd || overview.repo,
+    overview.repo,
+    checkoutPath,
+  );
+}
 
 export type WorktreeRetirementEntry = {
   id: string;
@@ -123,8 +132,6 @@ export const createWorktree = async (
 };
 export const pinWorktree = (id: string, pinned: boolean) =>
   invoke<void>("worktree_pin", { id, pinned });
-export const cleanupWorktrees = (cwd: string, ids: string[]) =>
-  invoke<CleanupReport>("worktree_cleanup", { cwd, ids });
 // A delayed heartbeat must not reinstate paths released by a later archive.
 let heartbeatQueue: Promise<void> = Promise.resolve();
 export const heartbeatWorktrees = (paths: string[]): Promise<void> => {

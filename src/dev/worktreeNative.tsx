@@ -105,8 +105,6 @@ function NativeWorktreeVerification() {
         await saveWorktreeSettings(repo, {
           ...current.settings,
           isolateByDefault: true,
-          autoCleanup: false,
-          retentionDays: 7,
           setupCommand: "npm ci --ignore-scripts && npm run build",
           copyPaths: [".env"],
           disposablePaths: ["node_modules", "dist"],

@@ -4,6 +4,30 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(unix)]
+fn wait_for_remote_helper<'scope, T: std::fmt::Debug>(
+    marker: &Path,
+    release: &Path,
+    operation: &str,
+    worker: std::thread::ScopedJoinHandle<'scope, Result<T, String>>,
+) -> std::thread::ScopedJoinHandle<'scope, Result<T, String>> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !marker.exists() && std::time::Instant::now() < deadline {
+        if worker.is_finished() {
+            std::fs::write(release, "release").unwrap();
+            let result = worker.join();
+            panic!("{operation} finished before its helper started: {result:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if !marker.exists() {
+        std::fs::write(release, "release").unwrap();
+        let result = worker.join();
+        panic!("{operation} helper did not start within 60 seconds: {result:?}");
+    }
+    worker
+}
+
 struct RetirementFixture {
     dir: PathBuf,
     repo: PathBuf,
@@ -163,7 +187,7 @@ fn selection(
 fn delayed_remote_review_releases_global_lifecycle_lock() {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let fixture = RetirementFixture::new();
     let entry = fixture.create_remote_branch("session-slow-review");
@@ -202,14 +226,7 @@ fn delayed_remote_review_releases_global_lifecycle_lock() {
             let conn = Connection::open(db).unwrap();
             build_retirement_plan_coordinated(&conn, host, &HashMap::new(), &[], Some(&cwd), &ids)
         });
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !marker.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        if !marker.exists() {
-            std::fs::write(&release, "release").unwrap();
-            panic!("remote helper did not start");
-        }
+        let review = wait_for_remote_helper(&marker, &release, "remote review", review);
 
         let (lifecycle_tx, lifecycle_rx) = mpsc::channel();
         scope.spawn(move || {
@@ -242,7 +259,7 @@ fn delayed_remote_review_releases_global_lifecycle_lock() {
 fn delayed_remote_delete_releases_global_lifecycle_lock() {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let fixture = RetirementFixture::new();
     let entry = fixture.create_remote_branch("session-slow-delete");
@@ -293,14 +310,7 @@ fn delayed_remote_delete_releases_global_lifecycle_lock() {
                 |windows| windows.clone(),
             )
         });
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !marker.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        if !marker.exists() {
-            std::fs::write(&release, "release").unwrap();
-            panic!("remote delete helper did not start");
-        }
+        let retirement = wait_for_remote_helper(&marker, &release, "remote delete", retirement);
 
         let (lifecycle_tx, lifecycle_rx) = mpsc::channel();
         scope.spawn(move || {

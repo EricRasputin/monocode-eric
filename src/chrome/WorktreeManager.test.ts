@@ -51,7 +51,7 @@ const entry = {
 };
 const overview: WorktreeOverview = {
   repo: "/repo",
-  settings: { isolateByDefault: true, autoCleanup: true, retentionDays: 7 },
+  settings: { isolateByDefault: true },
   entries: [
     { ...entry, id: "ready" },
     {
@@ -342,8 +342,6 @@ describe("worktree environment settings", () => {
 
     expect(saveWorktreeSettings).toHaveBeenCalledWith("/repo", {
       isolateByDefault: true,
-      autoCleanup: true,
-      retentionDays: 7,
       environmentVersion: 0,
       setupCommand: "pnpm install",
       copyPaths: [".env.local", ".config/project.json"],
@@ -399,6 +397,49 @@ describe("worktree environment settings", () => {
 });
 
 describe("worktree retirement inventory", () => {
+  it("opens and restores a nested project inside the selected checkout", async () => {
+    vi.mocked(useWorktrees).mockReturnValue({
+      overview: {
+        ...overview,
+        projectCwd: "/repo/apps/web",
+        entries: [
+          {
+            ...entry,
+            id: "open",
+            path: "/managed/open",
+            branch: "monocode/open",
+            blockedReason: "Pinned",
+          },
+          {
+            ...entry,
+            id: "restore",
+            path: "/managed/restore",
+            branch: "monocode/restore",
+            missing: true,
+            blockedReason: "Retired; durable recovery ref preserved",
+          },
+        ],
+      },
+      error: null,
+      pending: false,
+    });
+    const onOpen = vi.fn().mockResolvedValue(undefined);
+    await render({ cwd: "/repo/apps/web", onOpen });
+
+    await act(async () => button("Open").click());
+    expect(onOpen).toHaveBeenNthCalledWith(
+      1,
+      "/repo/apps/web",
+      "/managed/open/apps/web",
+    );
+    await act(async () => button("Restore").click());
+    expect(onOpen).toHaveBeenNthCalledWith(
+      2,
+      "/repo/apps/web",
+      "/managed/restore/apps/web",
+    );
+  });
+
   it("shows recovery storage for the canonical selected project", async () => {
     vi.mocked(useWorktrees).mockReturnValue({
       overview: { ...overview, projectCwd: "/repo/apps/web" },

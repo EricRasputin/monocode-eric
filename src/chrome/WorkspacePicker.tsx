@@ -4,7 +4,7 @@ import { Popover } from "./Popover";
 import { Check, ChevronDown, Folder, Worktree } from "./icons";
 import type { Session, WorkspaceChoice } from "../lib/session";
 import { sessionWorkCwd } from "../lib/session";
-import { canChooseWorkspace } from "../lib/worktrees";
+import { canChooseWorkspace, worktreeProjectPath } from "../lib/worktrees";
 import { useWorktrees } from "../hooks/useWorktrees";
 import { useProjectBranchesState } from "../hooks/useProjectBranches";
 
@@ -73,13 +73,18 @@ export function WorkspacePicker({
       />
     );
   const existing =
-    overview?.entries.filter(
-      (entry) =>
-        !entry.main &&
-        `${entry.branch ?? "Detached HEAD"} ${entry.path}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
-    ) ?? [];
+    overview?.entries
+      .filter(
+        (entry) =>
+          !entry.main &&
+          `${entry.branch ?? "Detached HEAD"} ${entry.path}`
+            .toLowerCase()
+            .includes(query.toLowerCase()),
+      )
+      .map((entry) => ({
+        entry,
+        projectPath: worktreeProjectPath(overview, entry.path),
+      })) ?? [];
   const optionClass =
     "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[12px] hover:bg-content/8 focus-visible:bg-content/8 focus-visible:outline-none";
   return (
@@ -163,13 +168,13 @@ export function WorkspacePicker({
                   placeholder="Find existing worktree…"
                   className="my-1 w-full rounded bg-content/5 px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent"
                 />
-                {existing.map((entry) => (
+                {existing.map(({ entry, projectPath }) => (
                   <button
                     type="button"
                     key={entry.path}
                     className={optionClass}
                     title={entry.path}
-                    onClick={() => select({ mode: "local", path: entry.path })}
+                    onClick={() => select({ mode: "local", path: projectPath })}
                   >
                     <Worktree className="size-3.5 shrink-0" aria-hidden />
                     <span className="min-w-0 flex-1 truncate font-mono">
@@ -180,7 +185,7 @@ export function WorkspacePicker({
                         Restore on send
                       </span>
                     )}
-                    {choice?.path === entry.path && (
+                    {choice?.path === projectPath && (
                       <Check className="size-3.5 shrink-0" />
                     )}
                   </button>

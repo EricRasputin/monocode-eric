@@ -24,6 +24,7 @@ import {
 import {
   pinWorktree,
   planWorktreeRetirement,
+  worktreeProjectPath,
   type WorktreeEntry,
   type WorktreeRetirementPlan,
   type WorktreeRetirementReport,
@@ -56,7 +57,7 @@ export function WorktreeManager({
 }: {
   cwd: string;
   recents: RecentProject[];
-  onOpen: (cwd: string, entry: WorktreeEntry) => Promise<void>;
+  onOpen: (cwd: string, worktreeCwd: string) => Promise<void>;
 }) {
   const [savedProjects, setSavedProjects] = useState(loadCleanupProjects);
   const [selectedKey, setSelectedKey] = useState(() => projectKey(cwd));
@@ -103,7 +104,7 @@ export function WorktreeManager({
         setSelectedKey(key);
         setFocusPicker(true);
       }}
-      onOpen={(entry) => onOpen(selected.path, entry)}
+      onOpen={(worktreeCwd) => onOpen(selected.path, worktreeCwd)}
     />
   );
 }
@@ -120,7 +121,7 @@ function ProjectWorktreeCleanup({
   projects: CleanupProject[];
   onSelectProject: (key: string) => void;
   focusPicker: boolean;
-  onOpen: (entry: WorktreeEntry) => Promise<void>;
+  onOpen: (worktreeCwd: string) => Promise<void>;
 }) {
   const { overview, error: loadError, pending } = useWorktrees(cwd);
   const [selection, setSelection] = useState<string[]>([]);
@@ -131,6 +132,10 @@ function ProjectWorktreeCleanup({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const project = projectKey(overview?.projectCwd ?? cwd);
+  const projectLocation = {
+    repo: overview?.repo ?? cwd,
+    projectCwd: overview?.projectCwd ?? cwd,
+  };
   const entries = (overview?.entries ?? []).filter(
     (entry) => !entry.projectCwd || projectKey(entry.projectCwd) === project,
   );
@@ -404,7 +409,13 @@ function ProjectWorktreeCleanup({
                   <button
                     className={quietButton}
                     disabled={busy}
-                    onClick={() => void run(() => onOpen(entry))}
+                    onClick={() =>
+                      void run(() =>
+                        onOpen(
+                          worktreeProjectPath(projectLocation, entry.path),
+                        ),
+                      )
+                    }
                   >
                     {entry.missing ? "Restore" : "Open"}
                   </button>
