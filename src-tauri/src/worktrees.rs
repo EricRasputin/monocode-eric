@@ -676,6 +676,12 @@ fn repository_common(cwd: &str) -> Result<String, String> {
 fn path_inside(path: &Path, parent: &Path) -> bool {
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    // Windows canonicalization adds a verbatim prefix only to existing paths.
+    // Missing descendants must still match their ordinary stored checkout path.
+    #[cfg(windows)]
+    let path = PathBuf::from(path_to_js(&path));
+    #[cfg(windows)]
+    let parent = PathBuf::from(path_to_js(&parent));
     path.starts_with(parent)
 }
 
@@ -4199,6 +4205,7 @@ mod tests {
             git(&repo, &["config", "user.name", "Worktree Test"]).unwrap();
             git(&repo, &["config", "user.email", "worktree@example.invalid"]).unwrap();
             git(&repo, &["config", "commit.gpgsign", "false"]).unwrap();
+            git(&repo, &["config", "core.autocrlf", "false"]).unwrap();
             git(
                 &repo,
                 &[
@@ -4512,7 +4519,12 @@ mod tests {
     fn external_primary_locked_and_detached_checkouts_are_preserved() {
         let fixture = Fixture::new();
         let entry = fixture.create("session-one");
-        let external = path_to_js(&fixture.dir.join("external\nwith newline"));
+        let external_name = if cfg!(windows) {
+            "external with spaces"
+        } else {
+            "external\nwith newline"
+        };
+        let external = path_to_js(&fixture.dir.join(external_name));
         git(
             &fixture.repo,
             &["worktree", "add", "-b", "external", &external, "main"],
