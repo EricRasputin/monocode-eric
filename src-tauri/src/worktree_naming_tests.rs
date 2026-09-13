@@ -86,6 +86,32 @@ fn naming_freezes_before_publish_or_manual_checkout_without_waiting_for_ai() {
 }
 
 #[test]
+fn explicit_retry_reuses_the_suggestion_after_a_non_mutating_git_failure() {
+    let f = Fixture::new();
+    let entry = draft(&f, "git-failure-retry-session");
+    setup_ready(&f, &entry);
+    git(&f.repo, &["pack-refs", "--all"]).unwrap();
+    let lock = f.repo.join(".git/packed-refs.lock");
+    std::fs::write(&lock, "held by another Git operation").unwrap();
+    let result = suggest(&f.conn, &entry.id, TOKEN, Some("retry-original-name"));
+    std::fs::remove_file(lock).unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        git(Path::new(&entry.path), &["branch", "--show-current"]).unwrap(),
+        entry.branch
+    );
+    assert_eq!(
+        status(&f.conn, &entry.id, TOKEN).unwrap(),
+        WorktreeNameStatus::Pending
+    );
+    let named = suggest(&f.conn, &entry.id, TOKEN, Some("replacement-name"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(named.branch, "monocode/retry-original-name");
+    setup::validate_checkout(&current(&f, &entry.id), &entry.path).unwrap();
+}
+
+#[test]
 fn naming_serializes_two_windows_competing_for_the_same_branch() {
     let f = Fixture::new();
     let one = draft(&f, "session-one");

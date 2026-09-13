@@ -327,7 +327,19 @@ pub(super) fn apply_pending(conn: &Connection, id: &str) -> Result<Option<Worktr
         let journal = record(conn, id)?.ok_or("Missing worktree naming journal")?;
         return match reconcile(conn, &entry, &journal) {
             Ok(Some(changed)) => Ok(Some(changed)),
-            _ => Err(error),
+            Ok(None) => {
+                // The live failure left the original checkout intact. Keep its
+                // saved suggestion retryable; interrupted-operation recovery
+                // still skips an uncompleted rename rather than replaying it.
+                conn.execute(
+                    "UPDATE worktree_naming SET state = 'ready', rename_oid = NULL
+                     WHERE worktree_id = ?1 AND state = 'skipped'",
+                    [id],
+                )
+                .map_err(|e| e.to_string())?;
+                Err(error)
+            }
+            Err(_) => Err(error),
         };
     }
     let journal = record(conn, id)?.ok_or("Missing worktree naming journal")?;
