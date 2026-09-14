@@ -57,9 +57,12 @@ Small, focused pull requests are welcome. Anything large is worth an issue first
 
 ## Build from source
 
-Fork releases are built and published automatically after changes to `main`
-pass CI on macOS, Linux, and Windows. Users update from inside the app; no local
-build is needed. Fork versions use `0.2.<CI run number>` independently of upstream.
+Changes to `main` run CI without publishing a release. When a batch is ready,
+open **Actions → CI → Run workflow**, select **main**, and enable **Publish fork
+update after checks pass (main only)**. After macOS, Linux, and Windows checks
+pass, packaging and publishing run automatically. Users update from inside the
+app; no local build is needed. Fork versions use `0.2.<CI run number>`
+independently of upstream. See [fork updates](docs/fork-updates.md) for details.
 
 For a local macOS build, run `npm ci` followed by `npm run build:fork` with
 `TAURI_SIGNING_PRIVATE_KEY` set to the fork's signing key path and

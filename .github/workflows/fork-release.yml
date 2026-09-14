@@ -1,6 +1,6 @@
 name: Fork release
 
-# CI calls this only after all three platform checks pass on main.
+# CI calls this only for an explicitly requested release after all checks pass on main.
 on:
   workflow_call:
     secrets:
