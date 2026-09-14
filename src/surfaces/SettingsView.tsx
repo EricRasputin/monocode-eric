@@ -1,4 +1,5 @@
 import { WorktreeManager } from "../chrome/WorktreeManager";
+import { formatAppVersion, readAppBuildInfo } from "../lib/appVersion";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDownCircle,
@@ -206,7 +207,6 @@ import {
 } from "../lib/notifications";
 import {
   installPendingUpdate,
-  readAppVersion,
   runUpdateFlow,
   type UpdaterSnapshot,
 } from "../lib/updater";
@@ -1012,12 +1012,14 @@ function UpdateRow({
     phase: "idle",
     currentVersion: "…",
   });
+  const [upstreamVersion, setUpstreamVersion] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void readAppVersion().then((currentVersion) => {
+    void readAppBuildInfo().then(({ version: currentVersion, upstream }) => {
       if (cancelled) return;
       setSnapshot((current) => ({ ...current, currentVersion }));
+      setUpstreamVersion(upstream?.version);
     });
     return () => {
       cancelled = true;
@@ -1055,12 +1057,23 @@ function UpdateRow({
       label={
         <span className="flex items-baseline gap-2">
           Version
-          <span className="font-mono text-[12px] text-content/45">
-            {snapshot.currentVersion}
+          <span
+            className="font-mono text-[12px] text-content/45"
+            title={
+              upstreamVersion
+                ? `Based on upstream MonoCode ${upstreamVersion}`
+                : undefined
+            }
+          >
+            {formatAppVersion(snapshot.currentVersion, upstreamVersion)}
           </span>
         </span>
       }
-      description={status}
+      description={
+        upstreamVersion
+          ? `Based on upstream MonoCode ${upstreamVersion}. ${status}`
+          : status
+      }
     >
       <div className="flex items-center gap-2">
         <SecondaryButton

@@ -16,8 +16,13 @@ import {
   forkChangelogSection,
   manifest,
   nextForkVersion,
+  readUpstreamRelease,
   shouldPublish,
 } from "./fork-release.mjs";
+
+const upstream = JSON.parse(
+  readFileSync(new URL("../upstream-release.json", import.meta.url)),
+);
 
 test("bundled notes use the fork version and human-readable merge titles", () => {
   const section = forkChangelogSection(
@@ -53,6 +58,8 @@ function fixture(t) {
     metadata[platform] = {
       version: "1.0.7",
       sha: "commit-7",
+      upstreamVersion: upstream.version,
+      upstream,
       platform,
       archive,
       dmg,
@@ -78,6 +85,7 @@ test("publishes a complete feed with immutable URLs and architecture-specific si
   const feed = JSON.parse(readFileSync(join(dir, "latest.json")));
   assert.equal(assets.length, 8);
   assert.equal(feed.version, "1.0.7");
+  assert.deepEqual(feed.upstream, upstream);
   assert.equal(feed.notes, "New worktree improvements");
   assert.deepEqual(Object.keys(feed.platforms), [
     "darwin-aarch64",
@@ -108,6 +116,50 @@ test("rejects mixed commits and versions", (t) => {
   assert.throws(
     () => manifest("1.0.8", "commit-7", "", dir),
     /Mismatched release metadata/,
+  );
+});
+
+test("rejects packages that disagree about the upstream release base", (t) => {
+  const { dir, metadata } = fixture(t);
+  metadata["darwin-x86_64"].upstream = { ...upstream, commit: "0".repeat(40) };
+  writeFileSync(
+    join(dir, "darwin-x86_64.json"),
+    JSON.stringify(metadata["darwin-x86_64"]),
+  );
+  assert.throws(
+    () => manifest("1.0.7", "commit-7", "", dir),
+    /Mismatched upstream release metadata/,
+  );
+});
+
+test("upstream provenance must match the source version and an exact release tag", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "upstream-metadata-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ version: upstream.version }),
+  );
+  writeFileSync(join(dir, "upstream-release.json"), JSON.stringify(upstream));
+  assert.deepEqual(readUpstreamRelease(dir), upstream);
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ version: "99.0.0" }),
+  );
+  assert.throws(
+    () => readUpstreamRelease(dir),
+    /must match the upstream source/,
+  );
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ version: upstream.version }),
+  );
+  writeFileSync(
+    join(dir, "upstream-release.json"),
+    JSON.stringify({ ...upstream, tag: "main" }),
+  );
+  assert.throws(
+    () => readUpstreamRelease(dir),
+    /must match the upstream source/,
   );
 });
 
@@ -321,6 +373,16 @@ test("bundled notes include the batch since the last independently numbered fork
     join(fixture.dir, "package.json"),
     JSON.stringify({ version: "9.8.7" }),
   );
+  fixture.git("tag", "v9.8.7", fixture.first);
+  writeFileSync(
+    join(fixture.dir, "upstream-release.json"),
+    JSON.stringify({
+      repository: "hardbeat920/monocode",
+      tag: "v9.8.7",
+      version: "9.8.7",
+      commit: fixture.first,
+    }),
+  );
   writeFileSync(
     join(fixture.dir, "CHANGELOG.md"),
     "# Changelog\n\nUpstream history\n",
@@ -332,4 +394,17 @@ test("bundled notes include the batch since the last independently numbered fork
   assert.match(notes, /First fix in the batch/);
   assert.match(notes, /Second fix in the batch/);
   assert.ok(!notes.includes("First fork release"));
+  writeFileSync(
+    join(fixture.dir, "upstream-release.json"),
+    JSON.stringify({
+      repository: "hardbeat920/monocode",
+      tag: "v9.8.7",
+      version: "9.8.7",
+      commit: "0".repeat(40),
+    }),
+  );
+  assert.throws(
+    () => fixture.run("prepare", "1.0.1"),
+    /does not match its release tag/,
+  );
 });

@@ -4,6 +4,26 @@ use tauri::menu::{AboutMetadata, Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(target_os = "macos")]
+fn about_metadata(version: &str, identifier: &str) -> AboutMetadata<'static> {
+    if !identifier.starts_with("com.monocode.fork.") {
+        return AboutMetadata::default();
+    }
+    #[derive(serde::Deserialize)]
+    struct UpstreamRelease {
+        version: String,
+    }
+    let upstream: UpstreamRelease =
+        serde_json::from_str(include_str!("../../upstream-release.json"))
+            .expect("bundled upstream release metadata must be valid");
+    AboutMetadata {
+        version: Some(version.to_owned()),
+        short_version: Some(upstream.version.clone()),
+        credits: Some(format!("Based on upstream MonoCode {}", upstream.version)),
+        ..Default::default()
+    }
+}
+
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     app.set_menu(build(app)?)?;
@@ -210,7 +230,10 @@ fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             .accelerator("CmdOrCtrl+Q")
             .build(app)?;
         let app_menu = SubmenuBuilder::new(app, "MonoCode")
-            .about(Some(AboutMetadata::default()))
+            .about(Some(about_metadata(
+                &app.package_info().version.to_string(),
+                &app.config().identifier,
+            )))
             .separator()
             .item(&open_settings)
             .item(&check_for_updates)

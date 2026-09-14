@@ -64,6 +64,9 @@ pass, packaging and publishing run automatically. Users update from inside the
 app; no local build is needed. The fork has its own versions (`1.0.0`, `1.0.1`,
 and so on) and `fork-v*` tags, independent of upstream and CI run numbers. Leave
 **Fork version** blank for the next patch or supply a newer minor/major version.
+The app displays both versions, for example **1.0.0 (0.1.46)**: our fork release,
+then the upstream release it is based on. `upstream-release.json` pins that base
+to its release tag and commit.
 See [fork updates](docs/fork-updates.md) for details.
 
 For a local macOS build, run `npm ci` followed by `npm run build:fork` with

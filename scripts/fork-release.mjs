@@ -95,6 +95,45 @@ function json(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+export function readUpstreamRelease(root = process.cwd()) {
+  const upstream = json(join(root, "upstream-release.json"));
+  versionParts(upstream.version);
+  if (
+    upstream.repository !== "hardbeat920/monocode" ||
+    upstream.tag !== `v${upstream.version}` ||
+    !/^[a-f0-9]{40}$/.test(upstream.commit) ||
+    json(join(root, "package.json")).version !== upstream.version
+  ) {
+    throw new Error(
+      "Upstream release metadata must match the upstream source version and release tag",
+    );
+  }
+  return upstream;
+}
+
+function verifyUpstreamBase() {
+  const upstream = readUpstreamRelease();
+  const taggedCommit = execFileSync(
+    "git",
+    ["rev-parse", `${upstream.tag}^{commit}`],
+    { encoding: "utf8" },
+  ).trim();
+  if (taggedCommit !== upstream.commit) {
+    throw new Error("Recorded upstream commit does not match its release tag");
+  }
+  try {
+    execFileSync("git", [
+      "merge-base",
+      "--is-ancestor",
+      upstream.commit,
+      "HEAD",
+    ]);
+  } catch {
+    throw new Error("Build does not contain the recorded upstream release");
+  }
+  return upstream;
+}
+
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
@@ -120,6 +159,7 @@ export function forkChangelogSection(version, messages, upstreamVersion, date) {
 
 function prepare(version) {
   releaseTag(version);
+  const upstream = verifyUpstreamBase();
   let previous;
   try {
     previous = execFileSync(
@@ -148,7 +188,7 @@ function prepare(version) {
   const section = forkChangelogSection(
     version,
     messages,
-    json("package.json").version,
+    upstream.version,
     new Date().toISOString().slice(0, 10),
   );
   const changelog = readFileSync("CHANGELOG.md", "utf8");
@@ -167,6 +207,7 @@ export function stage(version, target, root = process.cwd()) {
   releaseTag(version);
   const platform = platforms[target];
   if (!platform) throw new Error(`Unsupported target: ${target}`);
+  const upstream = readUpstreamRelease(root);
   const bundle = join(root, "target", target, "release/bundle");
   const output = join(root, "release-artifacts");
   mkdirSync(output, { recursive: true });
@@ -186,7 +227,8 @@ export function stage(version, target, root = process.cwd()) {
   writeJson(join(output, `${platform}.json`), {
     version,
     sha: gitSha(),
-    upstreamVersion: json(join(root, "package.json")).version,
+    upstreamVersion: upstream.version,
+    upstream,
     platform,
     archive,
     dmg,
@@ -200,8 +242,10 @@ export function stage(version, target, root = process.cwd()) {
 
 export function manifest(version, sha, notes, directory = "release-artifacts") {
   const tag = releaseTag(version);
+  const upstream = readUpstreamRelease();
   const update = {
     version,
+    upstream,
     notes,
     pub_date: new Date().toISOString(),
     platforms: {},
@@ -216,6 +260,14 @@ export function manifest(version, sha, notes, directory = "release-artifacts") {
       metadata.platform !== platform
     ) {
       throw new Error(`Mismatched release metadata for ${platform}`);
+    }
+    if (
+      metadata.upstreamVersion !== upstream.version ||
+      Object.entries(upstream).some(
+        ([key, value]) => metadata.upstream?.[key] !== value,
+      )
+    ) {
+      throw new Error(`Mismatched upstream release metadata for ${platform}`);
     }
     const stem = `MonoCode-Fork_${version}_${platform}`;
     if (
@@ -357,8 +409,9 @@ function publish(version) {
   ];
   if (previous) notesArgs.push("-f", `previous_tag_name=${previous.tag_name}`);
   const generated = JSON.parse(gh(...notesArgs)).body;
-  const upstream = json("package.json").version;
-  const notes = `MonoCode Fork ${version} (upstream ${upstream}).\n\n${generated}`;
+  const upstream = readUpstreamRelease();
+  const title = `MonoCode Fork ${version} (${upstream.version})`;
+  const notes = `${title}.\n\nBased on [upstream MonoCode ${upstream.version}](https://github.com/${upstream.repository}/releases/tag/${upstream.tag}), commit \`${upstream.commit}\`.\n\n${generated}`;
   const assets = manifest(version, sha, notes);
   const notesFile = "release-artifacts/release-notes.md";
   writeFileSync(notesFile, `${notes}\n`);
@@ -381,7 +434,7 @@ function publish(version) {
       sha,
       "--draft",
       "--title",
-      `MonoCode Fork ${version}`,
+      title,
       "--notes-file",
       notesFile,
     );
