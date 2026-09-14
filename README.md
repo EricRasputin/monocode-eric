@@ -17,6 +17,15 @@ Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCod
 
 ## Install
 
+**This fork (macOS):** download **MonoCode Fork** for Apple Silicon (`darwin-aarch64`)
+or Intel (`darwin-x86_64`) from [fork releases](https://github.com/EricRasputin/monocode-eric/releases/latest)
+and install it in `/Applications`. Then use **Check for Updates…** in the app menu
+or Settings. The app asks before downloading, installing, and restarting.
+Builds from before `0.2.0` need this one-time installation to enable updates.
+See [fork updates](docs/fork-updates.md) for release and signing details.
+
+The download links below are for upstream MonoCode, which is a separate app.
+
 > Install and log in to at least one provider first:
 >
 > - [Claude Code](https://claude.com/product/claude-code) - `claude auth login`
@@ -48,13 +57,21 @@ Small, focused pull requests are welcome. Anything large is worth an issue first
 
 ## Build from source
 
-For the macOS fork, run `npm ci` followed by `npm run build:fork`. The app and
-DMG are written under `target/release/bundle/`. This uses the existing
-**MonoCode Fork** identity (`com.monocode.fork.worktrees`) and its session data,
-with upstream automatic updates disabled.
+Fork releases are built and published automatically after changes to `main`
+pass CI on macOS, Linux, and Windows. Users update from inside the app; no local
+build is needed. Fork versions use `0.2.<CI run number>` independently of upstream.
+
+For a local macOS build, run `npm ci` followed by `npm run build:fork` with
+`TAURI_SIGNING_PRIVATE_KEY` set to the fork's signing key path and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` set to an empty string. The app, DMG, and
+signed update archive are written under `target/release/bundle/`. This preserves
+the **MonoCode Fork** identity (`com.monocode.fork.worktrees`) and its session data,
+and checks only this fork's update feed. Without the signing key, use
+`npm run build:fork -- --config '{"bundle":{"createUpdaterArtifacts":false}}'`
+to create a local app and DMG without a publishable update archive.
 
 When building from a session inside MonoCode Fork, leave the running app in
-place. Quit it before replacing `~/Applications/MonoCode Fork.app` with the
+place. Quit it before replacing `/Applications/MonoCode Fork.app` with the
 new bundle, then reopen it. Build in this checkout's own `target` directory so
 other running development builds are unaffected.
 

@@ -1,17 +1,16 @@
-import { getVersion } from "@tauri-apps/api/app";
+import { getName, getVersion } from "@tauri-apps/api/app";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import {
+  check,
+  type DownloadEvent,
+  type Update,
+} from "@tauri-apps/plugin-updater";
 import { announceUpdateAvailable } from "./sounds";
 import { rememberInstalledUpdate } from "./updateNotice";
 
 export type UpdaterPhase =
-  | "idle"
-  | "checking"
-  | "current"
-  | "available"
-  | "downloading"
-  | "error";
+  "idle" | "checking" | "current" | "available" | "downloading" | "error";
 
 export type UpdaterSnapshot = {
   phase: UpdaterPhase;
@@ -48,6 +47,7 @@ export async function runUpdateFlow(
   onProgress?: (snapshot: UpdaterSnapshot) => void,
 ): Promise<UpdaterSnapshot> {
   const currentVersion = await readAppVersion();
+  const appName = await getName().catch(() => "MonoCode");
   const base: UpdaterSnapshot = { phase: "checking", currentVersion };
   onProgress?.(base);
 
@@ -58,7 +58,7 @@ export async function runUpdateFlow(
       const current: UpdaterSnapshot = { phase: "current", currentVersion };
       onProgress?.(current);
       if (manual) {
-        await message("You're on the latest version.", { title: "MonoCode" });
+        await message("You're on the latest version.", { title: appName });
       }
       return current;
     }
@@ -77,7 +77,7 @@ export async function runUpdateFlow(
     const notes = update.body?.trim();
     const detail = notes ? `\n\n${notes}` : "";
     const yes = await ask(
-      `MonoCode ${update.version} is available (you have ${currentVersion}).${detail}\n\nInstall now?`,
+      `${appName} ${update.version} is available (you have ${currentVersion}).${detail}\n\nInstall and restart now?`,
       { title: "Update available", kind: "info" },
     );
     if (!yes) return available;
@@ -89,9 +89,13 @@ export async function runUpdateFlow(
       const idle: UpdaterSnapshot = { phase: "idle", currentVersion };
       onProgress?.(idle);
       if (manual) {
+        const releases =
+          appName === "MonoCode Fork"
+            ? "https://github.com/EricRasputin/monocode-eric/releases/latest"
+            : "https://github.com/hardbeat920/monocode/releases/latest";
         await message(
-          "Automatic updates aren't configured for this build.\n\nDownload releases at https://github.com/hardbeat920/monocode/releases/latest",
-          { title: "MonoCode" },
+          `Automatic updates aren't configured for this build.\n\nDownload the latest app at ${releases}`,
+          { title: appName },
         );
       }
       return idle;
@@ -102,7 +106,7 @@ export async function runUpdateFlow(
     onProgress?.(failed);
     if (manual) {
       await message(`Couldn't check for updates.\n\n${error}`, {
-        title: "MonoCode",
+        title: appName,
       });
     }
     return failed;
@@ -169,7 +173,9 @@ export async function installPendingUpdate(
       error,
     };
     onProgress?.(failed);
-    await message(`Couldn't install the update.\n\n${error}`, { title: "MonoCode" });
+    await message(`Couldn't install the update.\n\n${error}`, {
+      title: "MonoCode",
+    });
     return failed;
   }
 }
