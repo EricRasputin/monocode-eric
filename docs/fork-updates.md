@@ -36,7 +36,8 @@ its actual base even after newer upstream releases become available. It never
 fetches the latest upstream version to construct this label.
 
 Packaging verifies that the source version matches the record, the recorded tag
-points to its commit, and that commit is an ancestor of the build. Both macOS
+in the upstream repository points to its commit, and that commit is an ancestor
+of the build. Both macOS
 packages must report the same upstream metadata. The GitHub release title uses
 the paired display, and `latest.json` includes the upstream record alongside the
 plain fork `version`.

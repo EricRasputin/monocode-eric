@@ -113,11 +113,27 @@ export function readUpstreamRelease(root = process.cwd()) {
 
 function verifyUpstreamBase() {
   const upstream = readUpstreamRelease();
-  const taggedCommit = execFileSync(
+  const tagRef = `refs/tags/${upstream.tag}`;
+  const remoteRefs = execFileSync(
     "git",
-    ["rev-parse", `${upstream.tag}^{commit}`],
+    [
+      "ls-remote",
+      `https://github.com/${upstream.repository}.git`,
+      tagRef,
+      `${tagRef}^{}`,
+    ],
     { encoding: "utf8" },
   ).trim();
+  const refs = new Map(
+    remoteRefs
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [sha, ref] = line.split(/\s+/);
+        return [ref, sha];
+      }),
+  );
+  const taggedCommit = refs.get(`${tagRef}^{}`) ?? refs.get(tagRef);
   if (taggedCommit !== upstream.commit) {
     throw new Error("Recorded upstream commit does not match its release tag");
   }

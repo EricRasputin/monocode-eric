@@ -274,7 +274,7 @@ function gitFixture(t) {
     releasesFile,
     JSON.stringify([[release("1.0.0", { target_commitish: first })]]),
   );
-  // Replace only gh's network boundary; exercise the CLI against a real git repository.
+  // Replace network reads; exercise ancestry and tag checks against a real git repository.
   const preload = join(dir, "offline-gh.mjs");
   writeFileSync(
     preload,
@@ -283,9 +283,15 @@ function gitFixture(t) {
     import { readFileSync } from "node:fs";
     import { syncBuiltinESMExports } from "node:module";
     const original = childProcess.execFileSync;
-    childProcess.execFileSync = (command, ...args) => command === "gh"
-      ? readFileSync(process.env.FORK_TEST_RELEASES, "utf8")
-      : original(command, ...args);
+    childProcess.execFileSync = (command, ...args) => {
+      if (command === "gh") return readFileSync(process.env.FORK_TEST_RELEASES, "utf8");
+      if (command === "git" && args[0][0] === "ls-remote") {
+        const ref = args[0][2];
+        const sha = original("git", ["rev-parse", ref + "^{commit}"], { encoding: "utf8" }).trim();
+        return sha + "\\t" + ref + "^{}\\n";
+      }
+      return original(command, ...args);
+    };
     syncBuiltinESMExports();
   `,
   );
