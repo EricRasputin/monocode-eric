@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   copyFileSync,
   mkdirSync,
   readFileSync,
@@ -17,11 +18,73 @@ const platforms = {
   "x86_64-apple-darwin": "darwin-x86_64",
 };
 
-function releaseTag(version) {
-  if (!/^0\.2\.[1-9]\d*$/.test(version)) {
+function versionParts(version) {
+  if (
+    typeof version !== "string" ||
+    version !== version.trim() ||
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
+  ) {
     throw new Error(`Invalid fork release version: ${version}`);
   }
+  const parts = version.split(".").map(Number);
+  if (!parts.every(Number.isSafeInteger)) {
+    throw new Error(`Invalid fork release version: ${version}`);
+  }
+  return parts;
+}
+
+function compareVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < a.length; index++) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
+
+function releaseTag(version) {
+  versionParts(version);
   return `fork-v${version}`;
+}
+
+function publishedForkReleases(releases) {
+  return releases
+    .filter((release) => {
+      if (
+        release.draft ||
+        release.prerelease ||
+        !release.tag_name.startsWith("fork-v")
+      ) {
+        return false;
+      }
+      try {
+        versionParts(release.tag_name.slice(6));
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => compareVersions(b.tag_name.slice(6), a.tag_name.slice(6)));
+}
+
+export function nextForkVersion(requested, releases) {
+  const latest = publishedForkReleases(releases)[0]?.tag_name.slice(6);
+  if (requested) {
+    versionParts(requested);
+    if (compareVersions(requested, "1.0.0") < 0) {
+      throw new Error("New fork releases start at 1.0.0");
+    }
+    if (latest && compareVersions(requested, latest) <= 0) {
+      throw new Error(`Fork version must be newer than ${latest}`);
+    }
+    return requested;
+  }
+  if (!latest || compareVersions(latest, "1.0.0") < 0) return "1.0.0";
+  const parts = versionParts(latest);
+  parts[2]++;
+  const next = parts.join(".");
+  versionParts(next);
+  return next;
 }
 
 function digest(path) {
@@ -66,7 +129,7 @@ function prepare(version) {
         "--tags",
         "--first-parent",
         "--match",
-        "fork-v0.2.*",
+        "fork-v[0-9]*",
         "--abbrev=0",
         "HEAD^",
       ],
@@ -203,20 +266,12 @@ function gh(...args) {
 
 export function shouldPublish(version, releases) {
   releaseTag(version);
-  const build = Number(version.split(".")[2]);
-  return !releases.some((release) => {
-    const match = /^fork-v0\.2\.([1-9]\d*)$/.exec(release.tag_name);
-    return (
-      !release.draft &&
-      !release.prerelease &&
-      match &&
-      Number(match[1]) >= build
-    );
-  });
+  return !publishedForkReleases(releases).some(
+    (release) => compareVersions(release.tag_name.slice(6), version) >= 0,
+  );
 }
 
-function publish(version) {
-  const tag = releaseTag(version);
+function assertReleaseSource() {
   if (
     process.env.GITHUB_REPOSITORY !== repository ||
     process.env.GITHUB_REF !== "refs/heads/main"
@@ -228,18 +283,70 @@ function publish(version) {
   const sha = gitSha();
   if (sha !== process.env.GITHUB_SHA)
     throw new Error("Checkout differs from the CI commit");
-  const releases = JSON.parse(
+  return sha;
+}
+
+function listReleases() {
+  return JSON.parse(
     gh("api", `repos/${repository}/releases`, "--paginate", "--slurp"),
   ).flat();
+}
+
+function resolveVersion(requested) {
+  const sha = assertReleaseSource();
+  const releases = listReleases();
+  const previous = publishedForkReleases(releases)[0];
+  let alreadyReleased = false;
+  if (previous) {
+    const previousSha = execFileSync(
+      "git",
+      ["rev-parse", `${previous.tag_name}^{commit}`],
+      { encoding: "utf8" },
+    ).trim();
+    // A delayed run must not ship an older snapshot with a newer version.
+    try {
+      execFileSync("git", ["merge-base", "--is-ancestor", previousSha, sha]);
+    } catch {
+      throw new Error(
+        `Release commit must include the latest fork release (${previous.tag_name})`,
+      );
+    }
+    alreadyReleased = previousSha === sha && !requested;
+  }
+  const version = alreadyReleased
+    ? previous.tag_name.slice(6)
+    : nextForkVersion(requested, releases);
+  const draft = releases.find(
+    (release) => release.tag_name === releaseTag(version) && release.draft,
+  );
+  if (draft && draft.target_commitish !== sha) {
+    throw new Error(
+      `Draft fork-v${version} belongs to another commit; choose a different fork version`,
+    );
+  }
+  if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
+  appendFileSync(
+    process.env.GITHUB_OUTPUT,
+    `version=${version}\npublish=${!alreadyReleased}\n`,
+  );
+  console.log(
+    alreadyReleased
+      ? `This commit is already released as ${version}; nothing to publish.`
+      : `Selected MonoCode Fork ${version} for ${sha}`,
+  );
+}
+
+function publish(version) {
+  const tag = releaseTag(version);
+  const sha = assertReleaseSource();
+  const releases = listReleases();
   if (!shouldPublish(version, releases)) {
     console.log(
       "This version or a newer fork update is already published; leaving it unchanged.",
     );
     return;
   }
-  const previous = releases.find(
-    (release) => !release.draft && /^fork-v0\.2\./.test(release.tag_name),
-  );
+  const previous = publishedForkReleases(releases)[0];
   const notesArgs = [
     "api",
     `repos/${repository}/releases/generate-notes`,
@@ -301,11 +408,12 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [command, version, target] = process.argv.slice(2);
-  if (command === "prepare") prepare(version);
+  if (command === "version") resolveVersion(version);
+  else if (command === "prepare") prepare(version);
   else if (command === "stage") stage(version, target);
   else if (command === "publish") publish(version);
   else
     throw new Error(
-      "Usage: node scripts/fork-release.mjs <prepare|stage|publish> <version> [target]",
+      "Usage: node scripts/fork-release.mjs <version|prepare|stage|publish> [version] [target]",
     );
 }

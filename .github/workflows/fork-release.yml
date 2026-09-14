@@ -3,6 +3,11 @@ name: Fork release
 # CI calls this only for an explicitly requested release after all checks pass on main.
 on:
   workflow_call:
+    inputs:
+      version:
+        type: string
+        required: false
+        default: ""
     secrets:
       updater-private-key:
         required: true
@@ -14,11 +19,31 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  FORK_VERSION: 0.2.${{ github.run_number }}
-
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Select fork release version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_REQUESTED_VERSION: ${{ inputs.version }}
+        run: node scripts/fork-release.mjs version "$FORK_REQUESTED_VERSION"
+
   build:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    env:
+      FORK_VERSION: ${{ needs.version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +93,9 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: build
+    needs: [version, build]
+    env:
+      FORK_VERSION: ${{ needs.version.outputs.version }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

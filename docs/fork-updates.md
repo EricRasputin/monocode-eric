@@ -13,7 +13,7 @@ available update in the sidebar. Failed checks or downloads do not count as a
 successful update.
 
 The old `0.1.x` fork builds have no update endpoint or public key, so they need
-one initial replacement with a `0.2.x` build. Quit the old app first. If both
+one initial replacement with a `0.2.x` or newer build. Quit the old app first. If both
 `~/Applications/MonoCode Fork.app` and `/Applications/MonoCode Fork.app` exist,
 launch the new copy from `/Applications` to avoid opening the old build.
 
@@ -25,7 +25,10 @@ accumulated changes are ready to ship:
 
 1. Open [Actions → CI](https://github.com/EricRasputin/monocode-eric/actions/workflows/ci.yml).
 2. Choose **Run workflow** and select the **main** branch.
-3. Enable **Publish fork update after checks pass (main only)**, then run it.
+3. Enable **Publish fork update after checks pass (main only)**.
+4. Leave **Fork version** blank for the next patch release, or enter a version
+   such as `1.1.0` or `2.0.0` when deliberately starting a minor or major release.
+5. Run the workflow.
 
 That run checks the selected main commit on macOS, Linux, and Windows. Only after
 **all** checks pass does it call `fork-release.yml` to package, sign, and publish
@@ -36,10 +39,20 @@ No local build, version edit, tag push, or agent request is needed.
 The publish option is off by default, so a manual run can also be used just to
 check CI. Selecting another branch never publishes, even with the option enabled.
 
-- The app's fork version is `0.2.<CI run number>`. Upstream's version stays in
-  `package.json`, Cargo, and the base Tauri config; the fork config overrides it.
-  Version numbers can skip because CI-only runs do not publish releases.
-- Release tags use `fork-v0.2.<CI run number>`, so upstream `v*` tags stay separate.
+- The fork has its own version sequence: `1.0.0`, `1.0.1`, `1.0.2`, and so on.
+  CI run numbers and upstream releases do not advance it. The first release under
+  this scheme is `1.0.0`, which upgrades from the earlier `0.2.x` fork builds.
+  Only stable versions in `major.minor.patch` form are accepted.
+- Version selection runs inside the serialized release workflow, before either
+  architecture builds. It finds the highest published stable `fork-v*` version
+  and increments its patch number unless you supply a newer version explicitly.
+  Drafts, prereleases, and upstream tags do not determine the next version.
+- Release tags use `fork-v1.0.0`, independently of upstream's `v*` tags. The fork
+  also has its own application identity, updater key, and release feed, so an
+  upstream release with the same numeric version cannot be installed as an update.
+- Upstream's version stays in `package.json`, Cargo, and the base Tauri config;
+  the fork config overrides the app version. Release notes retain the upstream
+  version as provenance rather than using it as the fork's version.
 - Both `darwin-aarch64` and `darwin-x86_64` packages must finish successfully.
 - Packaging adds a changelog section for the fork version from changes on main
   since the previous fork release, so the post-update **What's new** view works.
@@ -51,9 +64,13 @@ check CI. Selecting another branch never publishes, even with the option enabled
   Only a complete upload becomes public and the latest release.
 - The app reads `releases/latest/download/latest.json`; package URLs point to
   immutable version tags. The embedded public key verifies update signatures.
-- Releases are serialized. Reruns and delayed older builds never replace a
-  published newer release. A failed draft can be retried with the same CI run;
-  a fresh manual CI run with publishing enabled gets a new version.
+- An automatic version selection for an already-released commit skips packaging.
+  A delayed run for a commit that does not include the latest fork release fails
+  before packaging. Explicit versions must be newer than the latest release.
+  Neither reruns nor delayed builds replace a published newer release.
+- A failed draft can be retried for its original commit and version. If that
+  version has a draft for another commit, choose a different explicit fork version;
+  the workflow refuses to overwrite a draft belonging to another commit.
 
 The inherited upstream release workflow is restricted to `hardbeat920/monocode`.
 It cannot publish an upstream-branded release over this fork's update feed.
@@ -86,7 +103,7 @@ from a bad release, revert the source change and manually run CI with publishing
 enabled to ship a higher fork version. Do not move an existing release tag or
 replace a published archive.
 
-Local builds default to `0.2.0`; release builds get their version through the
+Local builds default to `1.0.0`; release builds get their version through the
 Tauri config override in CI. Local builds are useful for development but are not
 published releases. A private-key-free local build can disable generation of
 updater artifacts using the command in the README.

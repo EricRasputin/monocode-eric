@@ -1,18 +1,27 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   forkChangelogSection,
   manifest,
+  nextForkVersion,
   shouldPublish,
 } from "./fork-release.mjs";
 
 test("bundled notes use the fork version and human-readable merge titles", () => {
   const section = forkChangelogSection(
-    "0.2.7",
+    "1.0.7",
     [
       "Merge pull request #8 from owner/updates\n\nEnable in-app updates",
       "Fix session recovery\n\nPreserve archived conversations.",
@@ -20,11 +29,11 @@ test("bundled notes use the fork version and human-readable merge titles", () =>
     "0.1.46",
     "2026-09-14",
   );
-  assert.match(section, /^## \[0\.2\.7\] - 2026-09-14\n/m);
+  assert.match(section, /^## \[1\.0\.7\] - 2026-09-14\n/m);
   assert.match(section, /- Enable in-app updates\n- Fix session recovery/);
   assert.match(section, /upstream MonoCode 0\.1\.46/);
   assert.ok(!section.includes("Merge pull request"));
-  assert.match(section, /releases\/tag\/fork-v0\.2\.7/);
+  assert.match(section, /releases\/tag\/fork-v1\.0\.7/);
 });
 
 function fixture(t) {
@@ -32,7 +41,7 @@ function fixture(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const metadata = {};
   for (const platform of ["darwin-aarch64", "darwin-x86_64"]) {
-    const stem = `MonoCode-Fork_0.2.7_${platform}`;
+    const stem = `MonoCode-Fork_1.0.7_${platform}`;
     const archive = `${stem}.app.tar.gz`;
     const dmg = `${stem}.dmg`;
     const contents = `build 7 for ${platform}`;
@@ -42,7 +51,7 @@ function fixture(t) {
     writeFileSync(join(dir, dmg), contents);
     writeFileSync(join(dir, `${archive}.sig`), signature);
     metadata[platform] = {
-      version: "0.2.7",
+      version: "1.0.7",
       sha: "commit-7",
       platform,
       archive,
@@ -61,14 +70,14 @@ function fixture(t) {
 test("publishes a complete feed with immutable URLs and architecture-specific signatures", (t) => {
   const { dir } = fixture(t);
   const assets = manifest(
-    "0.2.7",
+    "1.0.7",
     "commit-7",
     "New worktree improvements",
     dir,
   );
   const feed = JSON.parse(readFileSync(join(dir, "latest.json")));
   assert.equal(assets.length, 8);
-  assert.equal(feed.version, "0.2.7");
+  assert.equal(feed.version, "1.0.7");
   assert.equal(feed.notes, "New worktree improvements");
   assert.deepEqual(Object.keys(feed.platforms), [
     "darwin-aarch64",
@@ -78,7 +87,7 @@ test("publishes a complete feed with immutable URLs and architecture-specific si
     assert.equal(item.signature, `signature-for-${platform}`);
     assert.equal(
       item.url,
-      `https://github.com/EricRasputin/monocode-eric/releases/download/fork-v0.2.7/MonoCode-Fork_0.2.7_${platform}.app.tar.gz`,
+      `https://github.com/EricRasputin/monocode-eric/releases/download/fork-v1.0.7/MonoCode-Fork_1.0.7_${platform}.app.tar.gz`,
     );
   }
 });
@@ -86,18 +95,18 @@ test("publishes a complete feed with immutable URLs and architecture-specific si
 test("does not produce an update feed if either architecture is missing", (t) => {
   const { dir } = fixture(t);
   rmSync(join(dir, "darwin-x86_64.json"));
-  assert.throws(() => manifest("0.2.7", "commit-7", "", dir), /ENOENT/);
+  assert.throws(() => manifest("1.0.7", "commit-7", "", dir), /ENOENT/);
   assert.throws(() => readFileSync(join(dir, "latest.json")), /ENOENT/);
 });
 
 test("rejects mixed commits and versions", (t) => {
   const { dir } = fixture(t);
   assert.throws(
-    () => manifest("0.2.7", "commit-8", "", dir),
+    () => manifest("1.0.7", "commit-8", "", dir),
     /Mismatched release metadata/,
   );
   assert.throws(
-    () => manifest("0.2.8", "commit-7", "", dir),
+    () => manifest("1.0.8", "commit-7", "", dir),
     /Mismatched release metadata/,
   );
 });
@@ -107,30 +116,220 @@ test("rejects a changed bundle or signature after staging", (t) => {
   const arm = metadata["darwin-aarch64"];
   writeFileSync(join(dir, arm.archive), "corrupted download");
   assert.throws(
-    () => manifest("0.2.7", "commit-7", "", dir),
+    () => manifest("1.0.7", "commit-7", "", dir),
     /Damaged release asset/,
   );
   writeFileSync(join(dir, `${arm.archive}.sig`), "different signature");
   assert.throws(
-    () => manifest("0.2.7", "commit-7", "", dir),
+    () => manifest("1.0.7", "commit-7", "", dir),
     /Mismatched updater signature/,
   );
 });
 
 test("reruns and late older builds cannot replace a published newer update", () => {
   const release = (build, draft = false) => ({
-    tag_name: `fork-v0.2.${build}`,
+    tag_name: `fork-v1.0.${build}`,
     draft,
     prerelease: false,
   });
-  assert.equal(shouldPublish("0.2.7", []), true);
-  assert.equal(shouldPublish("0.2.7", [release(7, true)]), true);
-  assert.equal(shouldPublish("0.2.7", [release(6)]), true);
-  assert.equal(shouldPublish("0.2.7", [release(7)]), false);
-  assert.equal(shouldPublish("0.2.7", [release(10)]), false);
-  assert.equal(shouldPublish("0.2.10", [release(9)]), true);
+  assert.equal(shouldPublish("1.0.7", []), true);
+  assert.equal(shouldPublish("1.0.7", [release(7, true)]), true);
+  assert.equal(shouldPublish("1.0.7", [release(6)]), true);
+  assert.equal(shouldPublish("1.0.7", [release(7)]), false);
+  assert.equal(shouldPublish("1.0.7", [release(10)]), false);
+  assert.equal(shouldPublish("1.0.10", [release(9)]), true);
   assert.throws(
-    () => shouldPublish("0.1.46", []),
+    () => shouldPublish("v1.0.0", []),
     /Invalid fork release version/,
   );
+});
+
+const release = (version, overrides = {}) => ({
+  tag_name: `fork-v${version}`,
+  draft: false,
+  prerelease: false,
+  ...overrides,
+});
+
+test("fork numbering starts at 1.0.0 and ignores upstream, drafts, and prereleases", () => {
+  assert.equal(nextForkVersion("", []), "1.0.0");
+  assert.equal(nextForkVersion("", [release("0.2.12")]), "1.0.0");
+  assert.equal(
+    nextForkVersion("", [
+      release("1.0.0"),
+      release("99.0.0", { tag_name: "v99.0.0" }),
+      release("2.0.0", { draft: true }),
+      release("3.0.0", { prerelease: true }),
+      release("4.0.0-beta.1"),
+      release("not-a-version"),
+    ]),
+    "1.0.1",
+  );
+});
+
+test("fork versions advance independently and support explicit minor and major releases", () => {
+  const published = [release("1.9.12"), release("1.10.2"), release("0.2.99")];
+  assert.equal(nextForkVersion("", published), "1.10.3");
+  assert.equal(nextForkVersion("1.11.0", published), "1.11.0");
+  assert.equal(nextForkVersion("2.0.0", published), "2.0.0");
+  assert.equal(shouldPublish("1.0.0", [release("0.2.99")]), true);
+  assert.equal(shouldPublish("1.9.99", published), false);
+  assert.equal(shouldPublish("2.0.0", published), true);
+});
+
+test("rejects duplicate, older, malformed, and unsafe version numbers", () => {
+  for (const version of ["1.0.0", "0.2.13"]) {
+    assert.throws(() => nextForkVersion(version, [release("1.0.0")]));
+  }
+  for (const version of [
+    "v1.0.0",
+    "1.01.0",
+    "1.0",
+    "1.0.0-beta.1",
+    "1.0.0+fork",
+    "1.0.0\n",
+    "1.0.9007199254740992",
+  ]) {
+    assert.throws(
+      () => nextForkVersion(version, []),
+      /Invalid fork release version/,
+    );
+  }
+});
+
+function gitFixture(t) {
+  const dir = mkdtempSync(join(tmpdir(), "fork-version-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) =>
+    execFileSync("git", args, {
+      cwd: dir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  git("init");
+  git("config", "user.name", "Release Test");
+  git("config", "user.email", "release-test@example.invalid");
+  git("config", "commit.gpgsign", "false");
+  git("config", "tag.gpgsign", "false");
+  const commit = (message) => {
+    git("commit", "--allow-empty", "-m", message);
+    return git("rev-parse", "HEAD");
+  };
+  const first = commit("First fork release");
+  git("tag", "fork-v1.0.0");
+  const releasesFile = join(dir, "releases.json");
+  writeFileSync(
+    releasesFile,
+    JSON.stringify([[release("1.0.0", { target_commitish: first })]]),
+  );
+  // Replace only gh's network boundary; exercise the CLI against a real git repository.
+  const preload = join(dir, "offline-gh.mjs");
+  writeFileSync(
+    preload,
+    `
+    import childProcess from "node:child_process";
+    import { readFileSync } from "node:fs";
+    import { syncBuiltinESMExports } from "node:module";
+    const original = childProcess.execFileSync;
+    childProcess.execFileSync = (command, ...args) => command === "gh"
+      ? readFileSync(process.env.FORK_TEST_RELEASES, "utf8")
+      : original(command, ...args);
+    syncBuiltinESMExports();
+  `,
+  );
+  const output = join(dir, "output.txt");
+  const script = fileURLToPath(new URL("./fork-release.mjs", import.meta.url));
+  const run = (command, version = "") =>
+    execFileSync(
+      process.execPath,
+      ["--import", pathToFileURL(preload).href, script, command, version],
+      {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          GITHUB_REPOSITORY: "EricRasputin/monocode-eric",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: git("rev-parse", "HEAD"),
+          GITHUB_OUTPUT: output,
+          FORK_TEST_RELEASES: releasesFile,
+        },
+      },
+    );
+  return { dir, git, commit, first, releasesFile, output, run };
+}
+
+test("version preflight skips an already-released commit and selects the next batch", (t) => {
+  const fixture = gitFixture(t);
+  fixture.run("version");
+  assert.match(
+    readFileSync(fixture.output, "utf8"),
+    /version=1.0.0\npublish=false/,
+  );
+  fixture.commit("Batch of improvements");
+  fixture.run("version");
+  assert.match(
+    readFileSync(fixture.output, "utf8"),
+    /version=1.0.1\npublish=true/,
+  );
+  fixture.run("version", "1.1.0");
+  assert.match(
+    readFileSync(fixture.output, "utf8"),
+    /version=1.1.0\npublish=true/,
+  );
+});
+
+test("a failed draft can be retried only for its original commit", (t) => {
+  const fixture = gitFixture(t);
+  const candidate = fixture.commit("Release candidate");
+  writeFileSync(
+    fixture.releasesFile,
+    JSON.stringify([
+      [
+        release("1.0.0", { target_commitish: fixture.first }),
+        release("1.0.1", { draft: true, target_commitish: candidate }),
+      ],
+    ]),
+  );
+  fixture.run("version");
+  const selected = readFileSync(fixture.output, "utf8");
+  assert.match(selected, /version=1.0.1\npublish=true/);
+  fixture.commit("Different release candidate");
+  assert.throws(() => fixture.run("version"), /belongs to another commit/);
+  assert.equal(readFileSync(fixture.output, "utf8"), selected);
+});
+
+test("version preflight rejects an old commit after a newer release has shipped", (t) => {
+  const fixture = gitFixture(t);
+  const newer = fixture.commit("Newer release");
+  fixture.git("tag", "fork-v1.0.1");
+  writeFileSync(
+    fixture.releasesFile,
+    JSON.stringify([[release("1.0.1", { target_commitish: newer })]]),
+  );
+  fixture.git("checkout", "--detach", fixture.first);
+  assert.throws(() => fixture.run("version"));
+  assert.equal(existsSync(fixture.output), false);
+});
+
+test("bundled notes include the batch since the last independently numbered fork release", (t) => {
+  const fixture = gitFixture(t);
+  fixture.commit("First fix in the batch");
+  fixture.commit("Second fix in the batch");
+  writeFileSync(
+    join(fixture.dir, "package.json"),
+    JSON.stringify({ version: "9.8.7" }),
+  );
+  writeFileSync(
+    join(fixture.dir, "CHANGELOG.md"),
+    "# Changelog\n\nUpstream history\n",
+  );
+  fixture.run("prepare", "1.0.1");
+  const notes = readFileSync(join(fixture.dir, "CHANGELOG.md"), "utf8");
+  assert.match(notes, /## \[1\.0\.1\]/);
+  assert.match(notes, /upstream MonoCode 9\.8\.7/);
+  assert.match(notes, /First fix in the batch/);
+  assert.match(notes, /Second fix in the batch/);
+  assert.ok(!notes.includes("First fork release"));
 });
