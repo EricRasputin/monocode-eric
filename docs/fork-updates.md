@@ -28,6 +28,9 @@ or agent request is needed after merging a change.
   `package.json`, Cargo, and the base Tauri config; the fork config overrides it.
 - Release tags use `fork-v0.2.<CI run number>`, so upstream `v*` tags stay separate.
 - Both `darwin-aarch64` and `darwin-x86_64` packages must finish successfully.
+- Packaging adds a changelog section for the fork version from changes on main
+  since the previous fork release, so the post-update **What's new** view works.
+  This generated section is bundled in the app without committing version bumps.
 - The workflow checks bundle identity, version, architecture, and code signature.
   It stages a DMG, signed `.app.tar.gz`, and signature for each architecture.
 - A single publisher validates artifact hashes and commit/version consistency,

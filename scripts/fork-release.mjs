@@ -42,6 +42,64 @@ function gitSha() {
   }).trim();
 }
 
+export function forkChangelogSection(version, messages, upstreamVersion, date) {
+  releaseTag(version);
+  const entries = messages.map((message) => {
+    const paragraphs = message.trim().split(/\n\s*\n/);
+    const title =
+      /^Merge /.test(paragraphs[0]) && paragraphs[1]
+        ? paragraphs[1].split("\n")[0]
+        : paragraphs[0].split("\n")[0];
+    return `- ${title}`;
+  });
+  return `## [${version}] - ${date}\n\nBased on upstream MonoCode ${upstreamVersion}.\n\n${entries.join("\n")}\n\n[Full release notes](https://github.com/${repository}/releases/tag/${releaseTag(version)})\n`;
+}
+
+function prepare(version) {
+  releaseTag(version);
+  let previous;
+  try {
+    previous = execFileSync(
+      "git",
+      [
+        "describe",
+        "--tags",
+        "--first-parent",
+        "--match",
+        "fork-v0.2.*",
+        "--abbrev=0",
+        "HEAD^",
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ).trim();
+  } catch {
+    // The first release has no preceding fork tag; show recent main changes.
+  }
+  const args = ["log", "--first-parent", "--format=%B%x00"];
+  if (previous) args.push(`${previous}..HEAD`);
+  else args.push("-10");
+  const messages = execFileSync("git", args, { encoding: "utf8" })
+    .split("\0")
+    .map((message) => message.trim())
+    .filter(Boolean);
+  const section = forkChangelogSection(
+    version,
+    messages,
+    json("package.json").version,
+    new Date().toISOString().slice(0, 10),
+  );
+  const changelog = readFileSync("CHANGELOG.md", "utf8");
+  writeFileSync(
+    "CHANGELOG.md",
+    changelog.replace(/^(# [^\n]+\n)/, `$1\n${section}\n`),
+  );
+  if (!readFileSync("CHANGELOG.md", "utf8").includes(`## [${version}]`)) {
+    throw new Error(
+      "Could not add fork release notes to the bundled changelog",
+    );
+  }
+}
+
 export function stage(version, target, root = process.cwd()) {
   releaseTag(version);
   const platform = platforms[target];
@@ -243,10 +301,11 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [command, version, target] = process.argv.slice(2);
-  if (command === "stage") stage(version, target);
+  if (command === "prepare") prepare(version);
+  else if (command === "stage") stage(version, target);
   else if (command === "publish") publish(version);
   else
     throw new Error(
-      "Usage: node scripts/fork-release.mjs <stage|publish> <version> [target]",
+      "Usage: node scripts/fork-release.mjs <prepare|stage|publish> <version> [target]",
     );
 }
