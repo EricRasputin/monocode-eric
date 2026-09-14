@@ -91,7 +91,7 @@ function prepare(version) {
   const changelog = readFileSync("CHANGELOG.md", "utf8");
   writeFileSync(
     "CHANGELOG.md",
-    changelog.replace(/^(# [^\n]+\n)/, `$1\n${section}\n`),
+    changelog.replace(/^(# [^\n]+\n)/, (heading) => `${heading}\n${section}\n`),
   );
   if (!readFileSync("CHANGELOG.md", "utf8").includes(`## [${version}]`)) {
     throw new Error(
