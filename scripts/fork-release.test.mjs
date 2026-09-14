@@ -4,7 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { manifest, shouldPublish } from "./fork-release.mjs";
+import {
+  forkChangelogSection,
+  manifest,
+  shouldPublish,
+} from "./fork-release.mjs";
+
+test("bundled notes use the fork version and human-readable merge titles", () => {
+  const section = forkChangelogSection(
+    "0.2.7",
+    [
+      "Merge pull request #8 from owner/updates\n\nEnable in-app updates",
+      "Fix session recovery\n\nPreserve archived conversations.",
+    ],
+    "0.1.46",
+    "2026-09-14",
+  );
+  assert.match(section, /^## \[0\.2\.7\] - 2026-09-14\n/m);
+  assert.match(section, /- Enable in-app updates\n- Fix session recovery/);
+  assert.match(section, /upstream MonoCode 0\.1\.46/);
+  assert.ok(!section.includes("Merge pull request"));
+  assert.match(section, /releases\/tag\/fork-v0\.2\.7/);
+});
 
 function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "fork-release-test-"));

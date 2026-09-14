@@ -26,6 +26,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -37,6 +39,8 @@ jobs:
         with:
           key: fork-${{ matrix.target }}
       - run: npm ci
+      - name: Bundle fork release notes
+        run: node scripts/fork-release.mjs prepare "$FORK_VERSION"
       - name: Build and sign fork update
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.updater-private-key }}
