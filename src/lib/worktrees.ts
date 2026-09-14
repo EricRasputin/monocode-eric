@@ -148,6 +148,7 @@ export const heartbeatWorktrees = (paths: string[]): Promise<void> => {
 export function canChooseWorkspace(session: Session): boolean {
   return (
     !session.inboxAsk &&
+    !session.orchestrationLeadId &&
     !session.worktreeCwd &&
     !session.providerSessionId &&
     !session.blocks.some(
@@ -175,7 +176,10 @@ export async function prepareSessionWorktree(
       path:
         session.worktreeCwd ??
         session.workspaceChoice?.path ??
-        (session.workspaceChoice?.mode === "local" ? session.cwd : null),
+        (session.workspaceChoice?.mode === "local" ||
+        session.orchestrationLeadId
+          ? session.cwd
+          : null),
       name,
       createNew: shouldIsolateSession(session),
       useWorktree: session.workspaceChoice

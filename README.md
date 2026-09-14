@@ -48,6 +48,16 @@ Small, focused pull requests are welcome. Anything large is worth an issue first
 
 ## Build from source
 
+For the macOS fork, run `npm ci` followed by `npm run build:fork`. The app and
+DMG are written under `target/release/bundle/`. This uses the existing
+**MonoCode Fork** identity (`com.monocode.fork.worktrees`) and its session data,
+with upstream automatic updates disabled.
+
+When building from a session inside MonoCode Fork, leave the running app in
+place. Quit it before replacing `~/Applications/MonoCode Fork.app` with the
+new bundle, then reopen it. Build in this checkout's own `target` directory so
+other running development builds are unaffected.
+
 Supports macOS, Linux, and Windows.
 
 Need Node.js 20+ and a current stable Rust toolchain. On Linux, ensure standard Tauri prerequisites are installed (e.g. `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, `libjavascriptcoregtk-4.1-dev`). On Windows, the installer bootstraps the [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) runtime when it is missing.

@@ -1,13 +1,14 @@
 {
   "name": "monocode-desktop",
   "private": true,
-  "version": "0.1.45",
+  "version": "0.1.46",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:worktrees": "vite --host 127.0.0.1 --port 1422",
     "dev:stable": "vite --mode stable",
     "build": "tsc && vite build",
+    "build:fork": "tauri build --bundles app,dmg --config src-tauri/tauri.fork.conf.json",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -517,29 +517,37 @@ export function gitlabAttentionLabel(reason: string): string {
   }
 }
 
-export function prDiffCacheKey(repo: string, number: number): string {
-  return workItemLookupKey(repo, "pr", number);
+export function prDiffCacheKey(
+  repo: string,
+  number: number,
+  fullContext = false,
+): string {
+  return `${workItemLookupKey(repo, "pr", number)}${fullContext ? ":full" : ""}`;
 }
 
 export function peekGithubPrDiff(
   repo: string,
   number: number,
+  fullContext = false,
 ): GithubPrDiff | null {
-  return prDiffByKey.get(prDiffCacheKey(repo, number)) ?? null;
+  return prDiffByKey.get(prDiffCacheKey(repo, number, fullContext)) ?? null;
 }
 
 export async function githubPrDiff(
   cwd: string,
   repo: string,
   number: number,
+  options?: { fullContext?: boolean },
 ): Promise<GithubPrDiff> {
-  const key = prDiffCacheKey(repo, number);
+  const fullContext = options?.fullContext === true;
+  const key = prDiffCacheKey(repo, number, fullContext);
   const pending = prDiffInflight.get(key);
   if (pending) return pending;
   const promise = invoke<GithubPrDiff>("git_github_pr_diff", {
     cwd,
     repo,
     number,
+    fullContext,
   })
     .then((diff) => {
       prDiffByKey.set(key, diff);

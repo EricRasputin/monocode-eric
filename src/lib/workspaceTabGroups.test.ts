@@ -12,6 +12,7 @@ import type { Session } from "./session";
 import {
   applyPlaceSessionOnPane,
   filterTabsForProject,
+  findOpenSessionTab,
   findTabForProject,
   planWorkspaceTabClose,
   replaceGroupInTabOrder,
@@ -94,6 +95,20 @@ describe("focusedWorkspaceTabCwd", () => {
       "/alpha",
     );
     expect(focusedWorkspaceTabCwd(mixed, [])).toBeNull();
+  });
+});
+
+describe("findOpenSessionTab", () => {
+  it("does not focus a ghost tab whose session has been parked", () => {
+    const ghost = tab("ghost-tab", "parked-session");
+    expect(findOpenSessionTab([ghost], [], "parked-session")).toBeUndefined();
+    expect(
+      findOpenSessionTab(
+        [ghost],
+        [session("parked-session", "/workspace")],
+        "parked-session",
+      ),
+    ).toBe(ghost);
   });
 });
 

@@ -4,6 +4,7 @@ import { applyUiScale, loadUiScale } from "./uiScale";
 
 const THEME_HUE_KEY = "monocode.themeHue";
 const THEME_SATURATION_KEY = "monocode.themeSaturation";
+const THEME_DARK_LIGHTNESS_KEY = "monocode.themeDarkLightness";
 const OPACITY_KEY = "monocode.sidebarOpacity";
 const BLUR_KEY = "monocode.sidebarBlur";
 const PROJECT_RAIL_OPEN_KEY = "monocode.projectRailOpen";
@@ -65,6 +66,10 @@ export const THEME_HUE_DEFAULT = 240;
 export const THEME_SATURATION_MIN = 0;
 export const THEME_SATURATION_MAX = 100;
 export const THEME_SATURATION_DEFAULT = 0;
+
+export const THEME_DARK_LIGHTNESS_MIN = 0;
+export const THEME_DARK_LIGHTNESS_MAX = 30;
+export const THEME_DARK_LIGHTNESS_DEFAULT = 9;
 
 export const SIDEBAR_OPACITY_MIN = 0.15;
 export const SIDEBAR_OPACITY_MAX = 1;
@@ -164,6 +169,36 @@ export function saveThemeSaturation(value: number) {
   );
 }
 
+export function loadThemeDarkLightness(): number {
+  return Math.round(
+    clamp(
+      readNumber(THEME_DARK_LIGHTNESS_KEY) ?? THEME_DARK_LIGHTNESS_DEFAULT,
+      THEME_DARK_LIGHTNESS_MIN,
+      THEME_DARK_LIGHTNESS_MAX,
+    ),
+  );
+}
+
+export function saveThemeDarkLightness(value: number) {
+  writeNumber(
+    THEME_DARK_LIGHTNESS_KEY,
+    Math.round(
+      clamp(value, THEME_DARK_LIGHTNESS_MIN, THEME_DARK_LIGHTNESS_MAX),
+    ),
+  );
+}
+
+export function applyThemeDarkLightness(value: number) {
+  const next = Math.round(
+    clamp(value, THEME_DARK_LIGHTNESS_MIN, THEME_DARK_LIGHTNESS_MAX),
+  );
+  document.documentElement.style.setProperty(
+    "--theme-dark-lightness",
+    `${next}%`,
+  );
+  return next;
+}
+
 export function applyThemeTint(hue: number, saturation: number) {
   const nextHue = Math.round(clamp(hue, THEME_HUE_MIN, THEME_HUE_MAX));
   const nextSaturation = Math.round(
@@ -184,6 +219,7 @@ export function initAppearance() {
     HAS_NATIVE_GLASS,
   );
   applyThemeTint(loadThemeHue(), loadThemeSaturation());
+  applyThemeDarkLightness(loadThemeDarkLightness());
   applyThemePreference(loadThemePreference());
   watchSystemColorScheme();
   applySidebarOpacity(loadSidebarOpacity());

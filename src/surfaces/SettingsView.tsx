@@ -34,9 +34,10 @@ import {
   applyChatBackgroundSessionOpacity,
   applyChatBackgroundScope,
   applyBodyGlass,
-  applyThemePreference,
   applySidebarBlur,
   applySidebarOpacity,
+  applyThemeDarkLightness,
+  applyThemePreference,
   applyThemeTint,
   BODY_GLASS_DEFAULT,
   CHAT_BACKGROUND_EMPTY_OPACITY_DEFAULT,
@@ -51,6 +52,7 @@ import {
   loadChatBackgroundPath,
   loadChatBackgroundSessionOpacity,
   loadChatBackgroundScope,
+  loadThemeDarkLightness,
   loadThemePreference,
   loadSidebarBlur,
   loadSidebarOpacity,
@@ -63,6 +65,7 @@ import {
   saveChatBackgroundPath,
   saveChatBackgroundSessionOpacity,
   saveChatBackgroundScope,
+  saveThemeDarkLightness,
   saveThemePreference,
   saveSidebarBlur,
   saveSidebarOpacity,
@@ -77,6 +80,9 @@ import {
   SIDEBAR_OPACITY_DEFAULT,
   SIDEBAR_OPACITY_MAX,
   SIDEBAR_OPACITY_MIN,
+  THEME_DARK_LIGHTNESS_DEFAULT,
+  THEME_DARK_LIGHTNESS_MAX,
+  THEME_DARK_LIGHTNESS_MIN,
   THEME_HUE_DEFAULT,
   THEME_HUE_MAX,
   THEME_HUE_MIN,
@@ -1087,6 +1093,9 @@ function useAppearanceSettings() {
   const [blur, setBlur] = useState(loadSidebarBlur);
   const [themeHue, setThemeHue] = useState(loadThemeHue);
   const [themeSaturation, setThemeSaturation] = useState(loadThemeSaturation);
+  const [themeDarkLightness, setThemeDarkLightness] = useState(
+    loadThemeDarkLightness,
+  );
   const [bodyGlass, setBodyGlass] = useState(loadBodyGlass);
   const [chatBackgroundPath, setChatBackgroundPath] = useState(
     loadChatBackgroundPath,
@@ -1130,6 +1139,12 @@ function useAppearanceSettings() {
     saveThemeSaturation(next.saturation);
     setThemeHue(next.hue);
     setThemeSaturation(next.saturation);
+  }, []);
+
+  const onDarkLightness = useCallback((value: number) => {
+    const next = applyThemeDarkLightness(value);
+    saveThemeDarkLightness(next);
+    setThemeDarkLightness(next);
   }, []);
 
   const onBodyGlass = useCallback((next: boolean) => {
@@ -1202,6 +1217,7 @@ function useAppearanceSettings() {
     onOpacity(Math.round(SIDEBAR_OPACITY_DEFAULT * 100));
     onBlur(SIDEBAR_BLUR_DEFAULT);
     onTint(THEME_HUE_DEFAULT, THEME_SATURATION_DEFAULT);
+    onDarkLightness(THEME_DARK_LIGHTNESS_DEFAULT);
     onBodyGlass(BODY_GLASS_DEFAULT);
     onChatBackgroundEmptyOpacity(
       Math.round(CHAT_BACKGROUND_EMPTY_OPACITY_DEFAULT * 100),
@@ -1223,6 +1239,7 @@ function useAppearanceSettings() {
     onThemePreference,
     onOpacity,
     onTint,
+    onDarkLightness,
     onUiScale,
   ]);
 
@@ -1232,6 +1249,7 @@ function useAppearanceSettings() {
     blur,
     themeHue,
     themeSaturation,
+    themeDarkLightness,
     bodyGlass,
     chatBackgroundPath,
     chatBackgroundEmptyOpacity,
@@ -1244,6 +1262,7 @@ function useAppearanceSettings() {
     onOpacity,
     onBlur,
     onTint,
+    onDarkLightness,
     onBodyGlass,
     onChooseChatBackground,
     onClearChatBackground,
@@ -1281,7 +1300,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
         description={
           glassDisabled
             ? "Light mode always uses an opaque window. Your dark-mode value is preserved."
-            : "How much of the desktop shows through the sidebar and the project rail."
+            : "How much of the desktop shows through the project rail and other glass panes."
         }
       >
         <Slider
@@ -1335,6 +1354,24 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
           min={THEME_SATURATION_MIN}
           max={THEME_SATURATION_MAX}
           onChange={(value) => appearance.onTint(appearance.themeHue, value)}
+        />
+      </Row>
+      <Row
+        label="Dark-mode lightness"
+        description={
+          glassDisabled
+            ? "This only affects dark mode. Your dark-mode value is preserved."
+            : "Base brightness of the dark theme. Lower values are darker; zero is true black."
+        }
+      >
+        <Slider
+          label="Dark-mode lightness"
+          value={appearance.themeDarkLightness}
+          display={`${appearance.themeDarkLightness}%`}
+          min={THEME_DARK_LIGHTNESS_MIN}
+          max={THEME_DARK_LIGHTNESS_MAX}
+          onChange={appearance.onDarkLightness}
+          disabled={glassDisabled}
         />
       </Row>
       <Row

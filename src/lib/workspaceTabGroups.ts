@@ -58,6 +58,16 @@ export function findTabForProject(
   });
 }
 
+/** A tab is only openable as a chat when its session object is also mounted. */
+export function findOpenSessionTab(
+  tabs: readonly WorkspaceTab[],
+  sessions: readonly Pick<Session, "id">[],
+  sessionId: string,
+): WorkspaceTab | undefined {
+  if (!sessions.some((session) => session.id === sessionId)) return undefined;
+  return tabs.find((tab) => leafIds(tab.layout).includes(sessionId));
+}
+
 export function filterTabsForProject(
   tabs: WorkspaceTab[],
   sessions: Session[],

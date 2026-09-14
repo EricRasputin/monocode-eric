@@ -17,12 +17,48 @@ import {
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("sonner", () => ({
-  toast: { message: vi.fn(), loading: vi.fn(), success: vi.fn(), dismiss: vi.fn() },
+  toast: {
+    message: vi.fn(),
+    loading: vi.fn(),
+    success: vi.fn(),
+    dismiss: vi.fn(),
+  },
 }));
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("worktree session lifecycle", () => {
+  it("keeps an orchestration worker in its lead's checkout", async () => {
+    const worker = {
+      ...newSession("claude", "/repo"),
+      orchestrationLeadId: "lead",
+      worktreeCwd: "/owned/lead",
+    };
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/owned/lead")
+      .mockResolvedValue(undefined);
+    expect(shouldIsolateSession(worker)).toBe(false);
+    await prepareSessionWorktree(worker);
+    expect(invoke).toHaveBeenCalledWith("worktree_prepare", {
+      request: expect.objectContaining({
+        cwd: "/repo",
+        path: "/owned/lead",
+        createNew: false,
+      }),
+    });
+    vi.mocked(invoke).mockClear().mockResolvedValue(null);
+    const localWorker = { ...worker, worktreeCwd: undefined };
+    expect(shouldIsolateSession(localWorker)).toBe(false);
+    await prepareSessionWorktree(localWorker);
+    expect(invoke).toHaveBeenCalledWith("worktree_prepare", {
+      request: expect.objectContaining({
+        cwd: "/repo",
+        path: "/repo",
+        createNew: false,
+      }),
+    });
+  });
+
   it("starts the checkout without waiting for AI and applies its late result", async () => {
     const session = newSession("claude", "/repo");
     let finish!: (value: string | null) => void;

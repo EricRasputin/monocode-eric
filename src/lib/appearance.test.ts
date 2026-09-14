@@ -15,9 +15,12 @@ import {
   saveTranscriptAnchor,
   TRANSCRIPT_ANCHOR_DEFAULT,
   loadThemePreference,
+  loadThemeDarkLightness,
+  saveThemeDarkLightness,
   saveThemePreference,
   resolveColorScheme,
   THEME_PREFERENCE_DEFAULT,
+  THEME_DARK_LIGHTNESS_DEFAULT,
 } from "./appearance";
 
 const KEY = "monocode.transcriptLayout";
@@ -26,6 +29,7 @@ const ANCHOR_KEY = "monocode.transcriptAnchor";
 const CHAT_BACKGROUND_PATH_KEY = "monocode.chatBackgroundPath";
 const CHAT_BACKGROUND_OPACITY_KEY = "monocode.chatBackgroundOpacity";
 const CHAT_BACKGROUND_SCOPE_KEY = "monocode.chatBackgroundScope";
+const THEME_DARK_LIGHTNESS_KEY = "monocode.themeDarkLightness";
 
 function mockLocalStorage() {
   const data = new Map<string, string>();
@@ -184,5 +188,24 @@ describe("theme preference setting", () => {
 
   it("falls back to dark without matchMedia", () => {
     expect(resolveColorScheme("system")).toBe("dark");
+  });
+});
+
+describe("dark theme lightness setting", () => {
+  beforeEach(mockLocalStorage);
+  afterEach(() => {
+    localStorage.removeItem(THEME_DARK_LIGHTNESS_KEY);
+  });
+
+  it("defaults to the existing dark background lightness", () => {
+    expect(THEME_DARK_LIGHTNESS_DEFAULT).toBe(9);
+    expect(loadThemeDarkLightness()).toBe(9);
+  });
+
+  it("persists true black and clamps overly light values", () => {
+    saveThemeDarkLightness(0);
+    expect(loadThemeDarkLightness()).toBe(0);
+    saveThemeDarkLightness(100);
+    expect(loadThemeDarkLightness()).toBe(30);
   });
 });
