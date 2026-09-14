@@ -19,6 +19,7 @@ dist/
 dist-ssr/
 build/
 target/
+release-artifacts/
 gen/schemas/
 coverage/
 .vite/

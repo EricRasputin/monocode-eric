@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   release:
+    if: github.repository == 'hardbeat920/monocode'
     needs: [linux, windows]
     runs-on: macos-latest
     steps:
@@ -305,6 +306,7 @@ jobs:
             "$DEB" "$APPIMAGE" "$NSIS" "$NSIS_SIG"
 
   linux:
+    if: github.repository == 'hardbeat920/monocode'
     name: Linux packages
     runs-on: ubuntu-22.04
     steps:
@@ -346,6 +348,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.repository == 'hardbeat920/monocode'
     name: Windows packages
     runs-on: windows-latest
     steps:
