@@ -183,6 +183,28 @@ describe("fork repositories in Inbox", () => {
 });
 
 describe("repository identity for Inbox operations", () => {
+  it("caches full-file and hunk diffs separately for fork and upstream", async () => {
+    await Promise.all([
+      githubPrDiff("/fork", "me/widget", 10),
+      githubPrDiff("/fork", "me/widget", 10, { fullContext: true }),
+      githubPrDiff("/fork", "acme/widget", 10, { fullContext: true }),
+      githubPrDiff("/upstream", "ACME/Widget", 10, { fullContext: true }),
+    ]);
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenCalledWith("git_github_pr_diff", {
+      cwd: "/fork",
+      repo: "acme/widget",
+      number: 10,
+      fullContext: true,
+    });
+    expect(peekGithubPrDiff("me/widget", 10)?.patch).toBe("me/widget");
+    expect(peekGithubPrDiff("me/widget", 10, true)?.patch).toBe("me/widget");
+    expect(peekGithubPrDiff("acme/widget", 10)).toBeNull();
+    expect(peekGithubPrDiff("acme/widget", 10, true)?.patch).toBe(
+      "acme/widget",
+    );
+  });
+
   it("keeps details for the same number in fork and upstream separate", async () => {
     await Promise.all([
       githubWorkItemDetails("/fork", "me/widget", "issue", 10),
@@ -230,6 +252,7 @@ describe("repository identity for Inbox operations", () => {
       cwd: "/fork",
       repo: "acme/widget",
       number: 10,
+      fullContext: false,
     });
   });
 

@@ -435,6 +435,7 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
             ...buildThreadStartParams({
               cwd: input.cwd,
               runtimeMode: input.runtimeMode,
+              controlsAgents: input.controlsAgents,
               model,
               serviceTier,
             }),
@@ -454,6 +455,7 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
         buildThreadStartParams({
           cwd: input.cwd,
           runtimeMode: input.runtimeMode,
+          controlsAgents: input.controlsAgents,
           model,
           serviceTier,
         }),
@@ -519,6 +521,7 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
   const params = buildTurnStartParams({
     threadId: live.threadId,
     runtimeMode: input.runtimeMode,
+    controlsAgents: input.controlsAgents,
     prompt: input.text.trim() || undefined,
     attachments: input.attachments,
     model,

@@ -29,6 +29,7 @@ import { FilePreview } from "../chrome/FilePreview";
 import { FileTypeIcon } from "../chrome/FileTypeIcon";
 import { ToolDiffPreview } from "../chrome/ToolDiffPreview";
 import { PlanPreview } from "../chrome/PlanPreview";
+import { OrchestrationPreview } from "../chrome/OrchestrationPreview";
 import { TaskListPreview } from "../chrome/TaskListPreview";
 import {
   HandoffButton,
@@ -47,6 +48,7 @@ import {
   stubFilePreview,
 } from "../lib/harness/preview";
 import { copyText } from "../lib/clipboard";
+import { visibleUserPrompt } from "../lib/orchestration";
 import { playCue } from "../lib/sounds";
 import { legacyTaskListFromText } from "../lib/taskList";
 import { displayPath, resolveWorkspacePath } from "../lib/paths";
@@ -71,6 +73,8 @@ import { useTranscriptSelection } from "../hooks/useTranscriptSelection";
 import type { TranscriptLayout } from "../lib/appearance";
 import { AgentMarkdown } from "./AgentMarkdown";
 import { TranscriptSelectionMenu } from "./TranscriptSelectionMenu";
+import { parseUserMessageLink } from "../lib/linkPreview";
+import { UserLinkPreview } from "./UserLinkPreview";
 import {
   activityPhaseTitle,
   activityStillRunning,
@@ -133,6 +137,8 @@ type Props = {
   latestTurnAccessory?: ReactNode;
   /** False while another tab is in front; local transcript state is retained. */
   visible?: boolean;
+  /** A worker's transcript: show the orchestrator's turns instead of hiding them. */
+  managed?: boolean;
 };
 
 function AgentTranscriptComponent({
@@ -157,6 +163,7 @@ function AgentTranscriptComponent({
   onRevealReady,
   latestTurnAccessory,
   visible = true,
+  managed = false,
 }: Props) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const scroller = useRef<HTMLDivElement>(null);
@@ -182,7 +189,7 @@ function AgentTranscriptComponent({
   );
   const transcriptLayout = useTranscriptLayout();
   const promptAnchor = useTranscriptAnchor();
-  const lastUserId = lastUserBlockId(blocks);
+  const lastUserId = lastUserBlockId(blocks, managed);
   const seenUserId = useRef(lastUserId);
   if (lastUserId !== seenUserId.current) {
     seenUserId.current = lastUserId;
@@ -310,7 +317,7 @@ function AgentTranscriptComponent({
     return () => observer.disconnect();
   }, [scrollerEl, setShowJump, visible]);
 
-  const turns = groupTurns(blocks);
+  const turns = groupTurns(blocks, managed);
   const firstVisibleTurn = Math.max(0, turns.length - visibleTurnCount);
   const visibleTurns = turns.slice(firstVisibleTurn);
   const turnsRef = useRef(turns);
@@ -381,10 +388,15 @@ function AgentTranscriptComponent({
         ) : null}
         {visibleTurns.map((turn, turnIndex) => {
           const isLastTurn = firstVisibleTurn + turnIndex === turns.length - 1;
-          const userBlock = turnUserBlock(turn);
+          const userBlock = turnUserBlock(turn, managed);
           const durationMs = userBlock?.durationMs;
           const settled = !(busy && isLastTurn);
-          const items = groupTurnItems(turn);
+          const proposals = turn.filter((block) => block.orchestration);
+          // Proposals are turn results, like the changes card. Keep them out
+          // of the live work and append them after all of the lead's output.
+          const items = groupTurnItems(
+            turn.filter((block) => !block.orchestration),
+          );
           // Earlier activity groups have already been followed by prose or
           // more work. Only the last one can still be the live group.
           const foldedAt = lastActivityIndex(items);
@@ -506,12 +518,10 @@ function AgentTranscriptComponent({
           // do not collapse with it: they are lifted out and parked under the
           // work, where they stay put however often it re-folds.
           const foldEntries = fold
-            ? items
-                .slice(fold.start, fold.end + 1)
-                .map((entry, offset) => ({
-                  entry,
-                  index: fold.start + offset,
-                }))
+            ? items.slice(fold.start, fold.end + 1).map((entry, offset) => ({
+                entry,
+                index: fold.start + offset,
+              }))
             : [];
           const foldSubagents = foldEntries.filter(
             ({ entry }) => entry.type === "subagents",
@@ -586,6 +596,18 @@ function AgentTranscriptComponent({
                 return [foldLineRow, row];
               })}
               {foldLineAt >= items.length ? foldLineRow : null}
+              {settled &&
+                proposals
+                  .filter((block) => block.orchestration?.status !== "planning")
+                  .map((block) => (
+                    <div
+                      key={block.id}
+                      className="px-4 pt-1 pb-2"
+                      data-orchestration-result
+                    >
+                      <OrchestrationPreview block={block} busy={!!busy} />
+                    </div>
+                  ))}
               {isLastTurn && latestTurnAccessory ? latestTurnAccessory : null}
               {durationMs != null && settled ? (
                 <TurnDuration
@@ -804,7 +826,7 @@ function TurnMetricsBadge({
   return (
     <div
       ref={root}
-      className="relative shrink-0"
+      className="relative shrink-0 pl-1"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={() => setHovered(true)}
@@ -1010,6 +1032,7 @@ const TranscriptBlock = memo(function TranscriptBlock({
   }
 
   if (block.role === "plan") {
+    if (block.orchestration) return null;
     const legacyTasks = legacyTaskListFromText(block.text);
     if (legacyTasks) {
       return (
@@ -1053,6 +1076,9 @@ const TranscriptBlock = memo(function TranscriptBlock({
   }
 
   if (block.role === "system") {
+    if (block.interjection) {
+      return <InterjectionDivider block={block} />;
+    }
     return (
       <div className="px-4 py-2 text-content/50">
         <pre className="min-w-0 whitespace-pre-wrap break-words">
@@ -1091,10 +1117,15 @@ function UserMessageBlock({
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const [singleLine, setSingleLine] = useState(false);
-  const textRef = useRef<HTMLPreElement>(null);
+  const textRef = useRef<HTMLElement>(null);
   const card = block.secondOpinion;
   const note = block.noteCard;
-  const text = card && card.kind !== "handoff" ? "" : block.text;
+  const text =
+    card && card.kind !== "handoff" ? "" : visibleUserPrompt(block.text);
+  const messageLink = text ? parseUserMessageLink(text) : null;
+  const displayText = messageLink
+    ? `${messageLink.beforeText}${messageLink.afterText}`
+    : text;
   const chat = layout === "chat";
   const textOnly =
     Boolean(text) && !block.attachments?.length && !card && !note;
@@ -1178,12 +1209,25 @@ function UserMessageBlock({
             <SecondOpinionCard card={card} />
           </div>
         ) : null}
-        {text ? (
+        {messageLink ? (
+          <div
+            ref={(element) => {
+              textRef.current = element;
+            }}
+            className="user-message-with-link min-w-0 whitespace-pre-wrap break-words font-sans text-sm"
+          >
+            {messageLink.beforeText}
+            <UserLinkPreview link={messageLink.link} />
+            {messageLink.afterText}
+          </div>
+        ) : displayText ? (
           <pre
-            ref={textRef}
+            ref={(element) => {
+              textRef.current = element;
+            }}
             className={`min-w-0 whitespace-pre-wrap break-words font-sans text-sm ${expanded ? "" : "line-clamp-4"}`}
           >
-            {text}
+            {displayText}
           </pre>
         ) : null}
       </div>
@@ -2657,13 +2701,102 @@ function HandoffDivider({ block }: { block: Block }) {
   );
 }
 
-function lastUserBlockId(blocks: Block[]): string | undefined {
-  return turnUserBlock(blocks)?.id;
+/** A mid-turn interjection, e.g. OMP advisor notes: a labeled boundary with
+ * a collapsible advisory body below it. */
+function InterjectionDivider({ block }: { block: Block }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const textRef = useRef<HTMLPreElement>(null);
+
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el || !block.text) {
+      setOverflows(false);
+      return;
+    }
+    const measure = () => {
+      if (!expanded) {
+        setOverflows(el.scrollHeight > el.clientHeight + 1);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [block.text, expanded]);
+
+  const meta = block.interjection;
+  if (!meta) return null;
+  const label =
+    meta.customType === "advisor"
+      ? "Advisor"
+      : meta.customType === "custom"
+        ? "Notice"
+        : meta.customType;
+  const severityText =
+    meta.severity === "blocker"
+      ? "Blocker"
+      : meta.severity === "concern"
+        ? "Concern"
+        : meta.severity === "nit"
+          ? "Nit"
+          : undefined;
+  const severityClass =
+    meta.severity === "blocker"
+      ? "text-red-400"
+      : meta.severity === "concern"
+        ? "text-amber-400"
+        : "text-content/55";
+  return (
+    <div className="px-4 py-4">
+      <div className="flex items-center gap-3">
+        <div className="h-px min-w-4 flex-1 bg-content/12" />
+        <div
+          role="separator"
+          aria-label={`Interjection: ${label}`}
+          className="flex items-center gap-2 px-1.5 font-sans text-[12px] text-content/55"
+        >
+          <span>{label}</span>
+          {severityText ? (
+            <span className={`text-[11px] ${severityClass}`}>
+              {severityText}
+            </span>
+          ) : null}
+        </div>
+        <div className="h-px min-w-4 flex-1 bg-content/12" />
+      </div>
+      {block.text ? (
+        <div className="mt-2 px-2">
+          <pre
+            ref={textRef}
+            className={`min-w-0 whitespace-pre-wrap break-words font-sans text-[12.5px] leading-5 text-content/70 ${expanded ? "" : "line-clamp-2"}`}
+          >
+            {block.text}
+          </pre>
+          {overflows ? (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((value) => !value)}
+              className="mt-1 py-1 font-sans text-xs text-content/55 hover:text-content"
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-function turnUserBlock(blocks: Block[]): Block | undefined {
+function lastUserBlockId(blocks: Block[], managed = false): string | undefined {
+  return turnUserBlock(blocks, managed)?.id;
+}
+
+function turnUserBlock(blocks: Block[], managed = false): Block | undefined {
   for (let i = blocks.length - 1; i >= 0; i--) {
-    if (blocks[i].role === "user") return blocks[i];
+    const block = blocks[i];
+    if (block.role === "user" && (managed || !block.internal)) return block;
   }
   return undefined;
 }
