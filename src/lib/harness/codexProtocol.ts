@@ -4,6 +4,7 @@ import type {
   TaskListItem,
   ToolPreview,
   TurnIntent,
+  TurnMetrics,
 } from "../session";
 import {
   attachmentPath,
@@ -220,6 +221,8 @@ export function toCodexApprovalDecision(
 
 export type MappedCodexNotification = {
   events: HarnessEvent[];
+  /** Thread counters used by the live adapter to measure a single turn. */
+  totalTokenMetrics?: TurnMetrics;
   /** Provider diagnostics for debug logs, excluded from the transcript. */
   diagnostic?: string;
   /** When set, the active turn finished. */
@@ -400,16 +403,74 @@ function mapTokenUsage(rec: Record<string, unknown>): MappedCodexNotification {
   if (!last) return { events: [] };
   const used = numberField(last, "totalTokens");
   const window = numberField(usage, "modelContextWindow");
-  if (!used && !window) return { events: [] };
+  const metrics = tokenMetrics(last);
+  const total = asRecord(usage?.total);
+  const totalMetrics = total ? tokenMetrics(total) : null;
+  const hasMetrics = Object.keys(metrics).length > 0;
+  if (!used && !window && !hasMetrics) return { events: [] };
   return {
+    ...(totalMetrics && Object.keys(totalMetrics).length
+      ? { totalTokenMetrics: totalMetrics }
+      : {}),
     events: [
-      {
-        type: "context",
-        ...(used > 0 ? { used } : {}),
-        ...(window > 0 ? { window } : {}),
-      },
+      ...(used || window
+        ? [
+            {
+              type: "context" as const,
+              ...(used > 0 ? { used } : {}),
+              ...(window > 0 ? { window } : {}),
+            },
+          ]
+        : []),
+      ...(hasMetrics ? [{ type: "turn.metrics" as const, ...metrics }] : []),
     ],
   };
+}
+
+function tokenMetrics(usage: Record<string, unknown>): TurnMetrics {
+  const inputTokens = numberField(usage, "inputTokens");
+  const cacheReadTokens = numberField(usage, "cachedInputTokens");
+  const cacheWriteTokens = numberField(usage, "cacheWriteInputTokens");
+  const outputTokens = numberField(usage, "outputTokens");
+  const cacheReported =
+    "cachedInputTokens" in usage || "cacheWriteInputTokens" in usage;
+  return {
+    ...(inputTokens ? { inputTokens } : {}),
+    ...(outputTokens ? { outputTokens } : {}),
+    ...(cacheReadTokens ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
+    ...(cacheReported && inputTokens > 0
+      ? {
+          cacheHitPercent:
+            (cacheReadTokens / (inputTokens + cacheWriteTokens)) * 100,
+        }
+      : {}),
+  };
+}
+
+export function codexMetricsDifference(
+  total: TurnMetrics,
+  baseline: TurnMetrics,
+): TurnMetrics | null {
+  const metrics: TurnMetrics = {};
+  for (const field of [
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+  ] as const) {
+    if (total[field] != null) {
+      if (total[field] < (baseline[field] ?? 0)) return null;
+      metrics[field] = total[field] - (baseline[field] ?? 0);
+    }
+  }
+  const cacheable =
+    (metrics.inputTokens ?? 0) + (metrics.cacheWriteTokens ?? 0);
+  if (total.cacheHitPercent != null && cacheable > 0) {
+    metrics.cacheHitPercent =
+      ((metrics.cacheReadTokens ?? 0) / cacheable) * 100;
+  }
+  return metrics;
 }
 
 function mapTurnTerminal(
@@ -664,8 +725,7 @@ function mapSubAgentActivity(
   completed: boolean,
 ): HarnessEvent {
   const kind = (stringField(item, "kind") ?? "").toLowerCase();
-  const path =
-    stringField(item, "agentPath") ?? stringField(item, "agent_path");
+  const path = stringField(item, "agentPath") ?? stringField(item, "agent_path");
   const leaf = path?.split(/[/\\]/).filter(Boolean).pop();
   const title = leaf ? `${formatAgentType(leaf)} subagent` : "Subagent";
   if (kind === "interrupted") {
@@ -897,7 +957,8 @@ export function mapCodexSubagentSteps(
 
 /** The first line of a spawn's prompt, short enough to sit on a row. */
 function agentBrief(item: Record<string, unknown>): string | undefined {
-  const path = stringField(item, "agentPath") ?? stringField(item, "agent_path");
+  const path =
+    stringField(item, "agentPath") ?? stringField(item, "agent_path");
   const leaf = path?.split(/[/\\]/).filter(Boolean).pop();
   if (leaf) return `${formatAgentType(leaf)} subagent`;
   const prompt = stringField(item, "prompt");

@@ -1,4 +1,5 @@
 import { extractJsonObject, limitSection } from "./jsonText";
+import { sanitizeBranchFragment } from "./gitText";
 
 const MESSAGE_LIMIT = 8_000;
 const TITLE_LIMIT = 50;
@@ -35,10 +36,23 @@ export type GeneratedWorkItemHint = {
 export type GeneratedSessionTitle = {
   title: string;
   workItem: GeneratedWorkItemHint | null;
+  branch?: string;
 };
 
-export function buildThreadTitlePrompt(message: string): string {
-  return `${THREAD_TITLE_PROMPT}\n\nUser message:\n${limitSection(message, MESSAGE_LIMIT)}`;
+export function buildThreadTitlePrompt(
+  message: string,
+  includeBranch = false,
+): string {
+  const prompt = includeBranch
+    ? THREAD_TITLE_PROMPT.replace(
+        "Return JSON with exactly two keys: title and workItem.",
+        "Return JSON with exactly three keys: title, workItem and branch.\n" +
+          "branch is a concise Git branch fragment describing the same subject and outcome.\n" +
+          "Use 2-6 lowercase words separated by hyphens, at most 64 characters.\n" +
+          "Do not include a namespace, random suffix, issue prefix, or incidental instructions.",
+      )
+    : THREAD_TITLE_PROMPT;
+  return `${prompt}\n\nUser message:\n${limitSection(message, MESSAGE_LIMIT)}`;
 }
 
 export function sanitizeThreadTitle(raw: string): string {
@@ -67,42 +81,49 @@ export function parseGeneratedSessionTitle(
   if (json) {
     try {
       const parsed: unknown = JSON.parse(json);
-      if (parsed && typeof parsed === "object" && "title" in parsed) {
-        const title = sanitizeThreadTitle(
-          String((parsed as { title: unknown }).title),
-        );
-        if (title) {
-          const candidate = (parsed as { workItem?: unknown }).workItem;
-          const workItem =
-            candidate && typeof candidate === "object"
-              ? (candidate as { kind?: unknown; number?: unknown })
-              : null;
-          const kind = workItem?.kind;
-          const number = workItem?.number;
-          const validWorkItem: GeneratedWorkItemHint | null =
-            (kind === "issue" || kind === "pr") &&
-            typeof number === "number" &&
-            Number.isSafeInteger(number) &&
-            number > 0 &&
-            referencedNumber(message, number)
-              ? { kind, number }
-              : null;
-          return { title, workItem: validWorkItem };
+      if (parsed && typeof parsed === "object") {
+        const metadata = parsed as Record<string, unknown>;
+        const title =
+          typeof metadata.title === "string"
+            ? sanitizeThreadTitle(metadata.title)
+            : "";
+        const branch =
+          typeof metadata.branch === "string"
+            ? sanitizeBranchFragment(metadata.branch)
+            : "";
+        const candidate = metadata.workItem;
+        const workItem =
+          candidate && typeof candidate === "object"
+            ? (candidate as { kind?: unknown; number?: unknown })
+            : null;
+        const kind = workItem?.kind;
+        const number = workItem?.number;
+        const validWorkItem: GeneratedWorkItemHint | null =
+          (kind === "issue" || kind === "pr") &&
+          typeof number === "number" &&
+          Number.isSafeInteger(number) &&
+          number > 0 &&
+          referencedNumber(message, number)
+            ? { kind, number }
+            : null;
+        if (title || branch || validWorkItem) {
+          return {
+            title,
+            workItem: validWorkItem,
+            ...(branch ? { branch } : {}),
+          };
         }
       }
     } catch {
-      // Fall through to a bare-title parse when the model skipped JSON.
+      return null;
     }
   }
-
-  const fallback = sanitizeThreadTitle(raw);
-  if (!fallback || /[{}]/.test(fallback)) return null;
-  const words = fallback.split(" ").filter(Boolean).length;
-  if (words < 2 || words > 10) return null;
-  return { title: fallback, workItem: null };
+  // Providers can return quota/authentication failures as ordinary text.
+  // Only the requested JSON fields are metadata; prose must never name a task.
+  return null;
 }
 
 /** Backwards-compatible title-only parser for callers that do not need metadata. */
 export function parseGeneratedThreadTitle(raw: string): string | null {
-  return parseGeneratedSessionTitle(raw, "")?.title ?? null;
+  return parseGeneratedSessionTitle(raw, "")?.title || null;
 }

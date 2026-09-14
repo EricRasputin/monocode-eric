@@ -30,11 +30,12 @@ vi.mock("./piClient", () => ({
 
     request = mocks.request;
     close = mocks.close;
+    cancelRequest = vi.fn();
     pushLine = vi.fn();
   },
 }));
 
-import { compactPiContext, stopPiSession } from "./pi";
+import { compactPiContext, sendPiTurn, stopPiSession } from "./pi";
 import type { HarnessEvent } from "./types";
 
 describe("Pi live session", () => {
@@ -87,6 +88,87 @@ describe("Pi live session", () => {
       window: 200_000,
     });
     await stopPiSession("pi-compact");
+  });
+
+  it("totals assistant requests once across streaming and terminal usage snapshots", async () => {
+    const events: HarnessEvent[] = [];
+    const input = {
+      sessionId: "pi-metrics",
+      cwd: "/repo",
+      model: "pi:default",
+      modelSettings: {},
+      runtimeMode: "supervised" as const,
+      text: "Check and summarize",
+      attachments: [],
+      onEvent: (event: HarnessEvent) => events.push(event),
+    };
+    const turn = sendPiTurn(input);
+    await vi.waitFor(() =>
+      expect(mocks.request).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "prompt" }),
+        expect.any(Number),
+      ),
+    );
+    const frame = mocks.frames[0]!;
+    const first = {
+      role: "assistant",
+      usage: { input: 100, output: 20, cacheRead: 40 },
+    };
+    frame({ type: "message_start", message: { role: "assistant" } });
+    frame({ type: "message_update", usage: first.usage });
+    frame({ type: "message_end", message: first });
+    frame({ type: "turn_end", message: first });
+    frame({ type: "message_start", message: { role: "toolResult" } });
+    frame({ type: "message_start", message: { role: "assistant" } });
+    const second = {
+      role: "assistant",
+      usage: { input: 200, output: 30, cacheRead: 100 },
+    };
+    frame({
+      type: "message_update",
+      assistantMessageEvent: { partial: second },
+    });
+    frame({ type: "message_end", message: second });
+    frame({ type: "turn_end", message: second });
+    frame({ type: "agent_end", messages: [first, second] });
+    await turn;
+    expect(
+      events.filter((event) => event.type === "turn.metrics").at(-1),
+    ).toMatchObject({
+      inputTokens: 300,
+      outputTokens: 50,
+      cacheReadTokens: 140,
+      cacheHitPercent: (140 / 440) * 100,
+    });
+    expect(
+      events.filter((event) => event.type === "context").at(-1),
+    ).toMatchObject({ used: 330, window: 200_000 });
+    const nextTurn = sendPiTurn({ ...input, text: "Follow up" });
+    await vi.waitFor(() =>
+      expect(
+        mocks.request.mock.calls.filter(
+          ([command]) => command.type === "prompt",
+        ),
+      ).toHaveLength(2),
+    );
+    const followup = {
+      role: "assistant",
+      usage: { input: 50, output: 10, cacheRead: 0 },
+    };
+    frame({ type: "message_start", message: { role: "assistant" } });
+    frame({ type: "message_end", message: followup });
+    frame({ type: "turn_end", message: followup });
+    frame({ type: "agent_end", messages: [followup] });
+    await nextTurn;
+    expect(
+      events.filter((event) => event.type === "turn.metrics").at(-1),
+    ).toMatchObject({
+      inputTokens: 50,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheHitPercent: 0,
+    });
+    await stopPiSession("pi-metrics");
   });
 
   it("publishes readable Ponytail status and extension notifications", async () => {

@@ -16,10 +16,84 @@ import {
 } from "./workspaceSnapshot";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("sonner", () => ({
+  toast: { message: vi.fn(), loading: vi.fn(), success: vi.fn(), dismiss: vi.fn() },
+}));
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("worktree session lifecycle", () => {
+  it("starts the checkout without waiting for AI and applies its late result", async () => {
+    const session = newSession("claude", "/repo");
+    let finish!: (value: string | null) => void;
+    const result = new Promise<string | null>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/owned/new")
+      .mockResolvedValue(undefined);
+    expect(
+      await prepareSessionWorktree(session, "Verbose request", {
+        token: "request-token",
+        result,
+        isCurrent: () => true,
+      }),
+    ).toBe("/owned/new");
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenNthCalledWith(1, "worktree_prepare", {
+      request: expect.objectContaining({ autoNameToken: "request-token" }),
+    });
+    finish("semantic-name");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("worktree_name", {
+        sessionId: session.id,
+        token: "request-token",
+        branch: "semantic-name",
+      }),
+    );
+  });
+
+  it("saves naming after failed setup for native retry without hiding the failure", async () => {
+    const session = newSession("claude", "/repo");
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/owned/new")
+      .mockRejectedValueOnce(new Error("Setup failed"))
+      .mockResolvedValue(undefined);
+    await expect(
+      prepareSessionWorktree(session, "Request", {
+        token: "request-token",
+        result: Promise.resolve("fix-startup"),
+        isCurrent: () => true,
+      }),
+    ).rejects.toThrow("Setup failed");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("worktree_name", {
+        sessionId: session.id,
+        token: "request-token",
+        branch: "fix-startup",
+      }),
+    );
+  });
+
+  it("discards naming after cancellation instead of applying a stale result", async () => {
+    const session = newSession("claude", "/repo");
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/owned/new")
+      .mockResolvedValue(undefined);
+    await prepareSessionWorktree(session, "Request", {
+      token: "request-token",
+      result: Promise.resolve("late-result"),
+      isCurrent: () => false,
+    });
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("worktree_name", {
+        sessionId: session.id,
+        token: "request-token",
+        branch: null,
+      }),
+    );
+  });
+
   it("projects a selected nested project into another checkout", () => {
     expect(
       worktreeProjectPath(

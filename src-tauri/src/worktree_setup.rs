@@ -112,6 +112,9 @@ pub fn worktree_setup(
     let (operation, _lease) = {
         let _repository = host.repository_guard(&common)?;
         let mut windows = host.operation_guard()?;
+        for changed in super::naming::reconcile_repository(&conn, &common)? {
+            super::naming::emit(&app, Ok(Some(changed)));
+        }
         let Some(entry) = owned(&conn)?.into_iter().find(|entry| {
             entry.id == candidate.id && path_inside(Path::new(&path), Path::new(&entry.path))
         }) else {
@@ -125,7 +128,10 @@ pub fn worktree_setup(
             );
         }
         let operation = match environment::begin_setup(&conn, &path)? {
-            environment::BeginSetup::Skip => return Ok(()),
+            environment::BeginSetup::Skip => {
+                super::naming::emit(&app, super::naming::apply_pending(&conn, &entry.id));
+                return Ok(());
+            }
             environment::BeginSetup::Run(operation) => operation,
         };
         active.insert(operation.root_path().to_string());
@@ -154,9 +160,12 @@ pub fn worktree_setup(
         let _windows = host.operation_guard().map_err(|error| {
             format!("Setup state could not be saved. Restart Monocode before retrying: {error}")
         })?;
-        environment::finish_setup(&conn, &operation, &result).map_err(|error| {
-            format!("Setup state could not be saved. Restart Monocode before retrying: {error}")
-        })?
+        let completion =
+            environment::finish_setup(&conn, &operation, &result).map_err(|error| {
+                format!("Setup state could not be saved. Restart Monocode before retrying: {error}")
+            })?;
+        super::naming::emit(&app, super::naming::apply_pending(&conn, &candidate.id));
+        completion
     };
     let result = match (result, completion) {
         (Ok(()), environment::FinishSetup::Retry(error)) => Err(error),

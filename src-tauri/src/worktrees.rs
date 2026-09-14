@@ -23,6 +23,8 @@ mod environment;
 #[cfg(all(test, unix))]
 #[path = "worktree_environment_integration_tests.rs"]
 mod environment_integration_tests;
+#[path = "worktree_naming.rs"]
+pub(crate) mod naming;
 #[path = "worktree_setup.rs"]
 pub(crate) mod setup;
 #[path = "worktree_storage.rs"]
@@ -457,6 +459,7 @@ pub(crate) fn schema(conn: &Connection) -> rusqlite::Result<()> {
           WHERE removed = 1 AND active_retirement_plan_id IS NULL",
         [],
     )?;
+    naming::schema(conn)?;
     Ok(())
 }
 
@@ -493,6 +496,7 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         repositories: RepositoryReservations::default(),
     });
     environment::reset_interrupted(&app.state::<SessionStore>().open_auxiliary_conn()?)?;
+    naming::recover(app, &app.state::<SessionStore>().open_auxiliary_conn()?)?;
     storage_maintenance::schedule(app);
     // Cleanup is only invoked with the IDs the user reviewed and confirmed.
     Ok(())
@@ -672,6 +676,12 @@ fn repository_common(cwd: &str) -> Result<String, String> {
 fn path_inside(path: &Path, parent: &Path) -> bool {
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    // Windows canonicalization adds a verbatim prefix only to existing paths.
+    // Missing descendants must still match their ordinary stored checkout path.
+    #[cfg(windows)]
+    let path = PathBuf::from(path_to_js(&path));
+    #[cfg(windows)]
+    let parent = PathBuf::from(path_to_js(&parent));
     path.starts_with(parent)
 }
 
@@ -3430,7 +3440,22 @@ fn create(
     name: &str,
     base_ref: Option<&str>,
 ) -> Result<Owned, String> {
+    create_with_naming(conn, host, cwd, id, name, base_ref, None)
+}
+
+fn create_with_naming(
+    conn: &Connection,
+    host: &WorktreeHost,
+    cwd: &str,
+    id: &str,
+    name: &str,
+    base_ref: Option<&str>,
+    auto_name_token: Option<&str>,
+) -> Result<Owned, String> {
     validate_id(id)?;
+    if let Some(token) = auto_name_token {
+        validate_id(token)?;
+    }
     let (repo, common) = repository(cwd)?;
     if owned(conn)?.iter().any(|v| v.id == id) {
         return Err("This session already owns a worktree".into());
@@ -3449,7 +3474,11 @@ fn create(
     } else {
         base_ref
     };
-    let branch = format!("monocode/{}-{}", slug(name), id);
+    let branch = if auto_name_token.is_some() {
+        naming::available_branch(Path::new(&repo), &format!("monocode/task-{}", &id[..8]))?
+    } else {
+        format!("monocode/{}-{}", slug(name), id)
+    };
     git(Path::new(&repo), &["check-ref-format", "--branch", &branch])?;
     let hash = common.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
         (hash ^ byte as u64).wrapping_mul(0x100000001b3)
@@ -3497,6 +3526,9 @@ fn create(
         Some(&project_scope),
         None,
     )?;
+    if let Some(token) = auto_name_token {
+        naming::register(&tx, &entry, token)?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     if let Err(error) = git(
         Path::new(&repo),
@@ -3901,6 +3933,8 @@ pub struct PrepareWorktree {
     use_worktree: Option<bool>,
     #[serde(default)]
     base_ref: Option<String>,
+    #[serde(default)]
+    auto_name_token: Option<String>,
 }
 
 #[tauri::command(async)]
@@ -3913,7 +3947,11 @@ pub fn worktree_prepare(
     let common = repository_common(&request.cwd)?;
     let _repository = host.repository_guard(&common)?;
     let mut windows = host.operation_guard()?;
-    let work_path = prepare(&store.open_auxiliary_conn()?, &host, request)?;
+    let conn = store.open_auxiliary_conn()?;
+    for changed in naming::reconcile_repository(&conn, &common)? {
+        naming::emit(window.app_handle(), Ok(Some(changed)));
+    }
+    let work_path = prepare(&conn, &host, request)?;
     if let Some(path) = &work_path {
         let leases = windows.entry(window.label().into()).or_default();
         let path = PathBuf::from(path);
@@ -3936,6 +3974,7 @@ fn prepare(
         create_new,
         use_worktree,
         base_ref,
+        auto_name_token,
     } = request;
     let records = owned(conn)?;
     let entry = records.iter().find(|v| {
@@ -3986,7 +4025,16 @@ fn prepare(
         }
         Some(scoped_path(
             &cwd,
-            &create(conn, host, &cwd, &session_id, &name, base_ref.as_deref())?.path,
+            &create_with_naming(
+                conn,
+                host,
+                &cwd,
+                &session_id,
+                &name,
+                base_ref.as_deref(),
+                auto_name_token.as_deref(),
+            )?
+            .path,
         )?)
     } else {
         None
@@ -4135,16 +4183,16 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    struct Fixture {
-        dir: PathBuf,
-        repo: PathBuf,
-        db: PathBuf,
-        conn: Connection,
-        host: WorktreeHost,
+    pub(super) struct Fixture {
+        pub(super) dir: PathBuf,
+        pub(super) repo: PathBuf,
+        pub(super) db: PathBuf,
+        pub(super) conn: Connection,
+        pub(super) host: WorktreeHost,
     }
 
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let dir = std::env::temp_dir().join(format!(
                 "monocode-worktree-test-{}-{}-{}",
                 std::process::id(),
@@ -4157,6 +4205,7 @@ mod tests {
             git(&repo, &["config", "user.name", "Worktree Test"]).unwrap();
             git(&repo, &["config", "user.email", "worktree@example.invalid"]).unwrap();
             git(&repo, &["config", "commit.gpgsign", "false"]).unwrap();
+            git(&repo, &["config", "core.autocrlf", "false"]).unwrap();
             git(
                 &repo,
                 &[
@@ -4470,7 +4519,12 @@ mod tests {
     fn external_primary_locked_and_detached_checkouts_are_preserved() {
         let fixture = Fixture::new();
         let entry = fixture.create("session-one");
-        let external = path_to_js(&fixture.dir.join("external\nwith newline"));
+        let external_name = if cfg!(windows) {
+            "external with spaces"
+        } else {
+            "external\nwith newline"
+        };
+        let external = path_to_js(&fixture.dir.join(external_name));
         git(
             &fixture.repo,
             &["worktree", "add", "-b", "external", &external, "main"],
@@ -4627,6 +4681,7 @@ mod tests {
     fn preparation_is_idempotent_and_respects_repository_defaults() {
         let fixture = Fixture::new();
         let request = || PrepareWorktree {
+            auto_name_token: None,
             cwd: path_to_js(&fixture.repo),
             session_id: "session-one".into(),
             path: None,
@@ -4711,6 +4766,7 @@ mod tests {
             )
             .unwrap();
         let request = || PrepareWorktree {
+            auto_name_token: None,
             cwd: cwd.clone(),
             session_id: "draft-one".into(),
             path: None,
@@ -4756,6 +4812,7 @@ mod tests {
         git(&fixture.repo, &["add", "."]).unwrap();
         git(&fixture.repo, &["commit", "-m", "Subproject"]).unwrap();
         let request = || PrepareWorktree {
+            auto_name_token: None,
             cwd: path_to_js(&nested),
             session_id: "session-one".into(),
             path: None,

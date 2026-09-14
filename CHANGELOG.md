@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenCode falls back to readable local paths for unsupported attachment formats instead of sending provider-rejected file parts, and repairs sessions already stuck on an unsupported file turn. Fixes #211.
+
 ## [0.1.45] - 2026-09-13
 
 ### Added

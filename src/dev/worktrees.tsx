@@ -386,6 +386,8 @@ mockIPC(
       return recoveryStorage();
     }
     if (command === "worktree_setup") return;
+    if (command === "worktree_name_status") return "waiting";
+    if (command === "worktree_name") return "named";
     if (command === "worktree_heartbeat") return;
     if (command === "worktree_retirement_plan") {
       return payload.sessionIds?.length
@@ -411,6 +413,7 @@ const { WorktreeRetirementDialog } =
   await import("../chrome/WorktreeRetirementDialog");
 const { AppToaster } = await import("../chrome/AppToaster");
 const { toast } = await import("sonner");
+const { finishWorktreeNaming } = await import("../lib/worktreeNaming");
 const { archiveSessionsWithRetirement } =
   await import("../lib/worktreeRetirement");
 const { refreshWorktrees } = await import("../hooks/useWorktrees");
@@ -438,6 +441,23 @@ function Preview() {
     null,
   );
   useEffect(() => {
+    if (previewParams.get("toast") === "naming") {
+      let current = true;
+      void finishWorktreeNaming(
+        "preview-naming",
+        {
+          token: "preview-naming",
+          result: Promise.resolve(null),
+          retry: async () => "preview-worktree-name",
+          isCurrent: () => current,
+        },
+        Promise.resolve(),
+      );
+      return () => {
+        current = false;
+        toast.dismiss("worktree-naming-preview-naming");
+      };
+    }
     if (previewParams.get("toast") !== "kept") return;
     const id = toast("Session archived", {
       description: "Worktree kept: Commits not merged into main",

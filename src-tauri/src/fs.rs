@@ -426,10 +426,13 @@ pub async fn git_commit(cwd: String, message: String) -> Result<(), String> {
 
 /// Push the current branch to its upstream, or set upstream on first push.
 #[tauri::command]
-pub async fn git_push(cwd: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || git_push_for(&expand_home(&cwd)))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_push(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
+        git_push_for(&expand_home(&cwd))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Fast-forward the current branch from its upstream.
@@ -444,10 +447,13 @@ pub async fn git_pull(cwd: String) -> Result<(), String> {
 
 /// Pull incoming commits, then push local commits.
 #[tauri::command]
-pub async fn git_sync(cwd: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || git_sync_changes_for(&expand_home(&cwd)))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_sync(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
+        git_sync_changes_for(&expand_home(&cwd))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -496,6 +502,7 @@ struct GitPrCreateInput {
 /// Create a GitHub pull request with `gh` and return its URL.
 #[tauri::command]
 pub async fn git_pr_create(
+    app: tauri::AppHandle,
     cwd: String,
     title: String,
     body: String,
@@ -503,6 +510,7 @@ pub async fn git_pr_create(
     head: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
         git_pr_create_for(
             &expand_home(&cwd),
             &GitPrCreateInput {
@@ -597,10 +605,21 @@ pub async fn git_github_repo(cwd: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Open issues or pull requests for the current GitHub remote, via `gh`.
+/// The local repository and its fork parent, independently of `gh`'s default.
+#[tauri::command]
+pub async fn git_github_inbox_repos(cwd: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_github_inbox_repos_for(&expand_home(&cwd), gh_checked)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Issues or pull requests for an explicit GitHub repository, via `gh`.
 #[tauri::command]
 pub async fn git_github_work_items(
     cwd: String,
+    repo: String,
     kind: String,
     assigned_to_me: bool,
     state: String,
@@ -610,6 +629,7 @@ pub async fn git_github_work_items(
     tauri::async_runtime::spawn_blocking(move || {
         git_github_work_items_for(
             &expand_home(&cwd),
+            &repo,
             &kind,
             assigned_to_me,
             &state,
@@ -652,11 +672,12 @@ pub struct GitHubWorkItemDetails {
 #[tauri::command]
 pub async fn git_github_work_item_details(
     cwd: String,
+    repo: String,
     kind: String,
     number: i64,
 ) -> Result<GitHubWorkItemDetails, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git_github_work_item_details_for(&expand_home(&cwd), &kind, number)
+        git_github_work_item_details_for(&expand_home(&cwd), &repo, &kind, number)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -705,11 +726,12 @@ pub struct GitHubWorkItemThread {
 #[tauri::command]
 pub async fn git_github_work_item_thread(
     cwd: String,
+    repo: String,
     kind: String,
     number: i64,
 ) -> Result<GitHubWorkItemThread, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git_github_work_item_thread_for(&expand_home(&cwd), &kind, number)
+        git_github_work_item_thread_for(&expand_home(&cwd), &repo, &kind, number)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -719,13 +741,21 @@ pub async fn git_github_work_item_thread(
 #[tauri::command]
 pub async fn git_github_work_item_comment(
     cwd: String,
+    repo: String,
     kind: String,
     number: i64,
     body: String,
     in_reply_to: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git_github_work_item_comment_for(&expand_home(&cwd), &kind, number, &body, &in_reply_to)
+        git_github_work_item_comment_for(
+            &expand_home(&cwd),
+            &repo,
+            &kind,
+            number,
+            &body,
+            &in_reply_to,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -753,10 +783,16 @@ const MAX_PR_DIFF_BYTES: usize = 2 * 1024 * 1024;
 
 /// Unified diff and file stats for a pull request, via `gh`.
 #[tauri::command]
-pub async fn git_github_pr_diff(cwd: String, number: i64) -> Result<GitHubPrDiff, String> {
-    tauri::async_runtime::spawn_blocking(move || git_github_pr_diff_for(&expand_home(&cwd), number))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_github_pr_diff(
+    cwd: String,
+    repo: String,
+    number: i64,
+) -> Result<GitHubPrDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_github_pr_diff_for(&expand_home(&cwd), &repo, number)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -786,11 +822,13 @@ pub async fn git_branches(cwd: String) -> Result<GitBranches, String> {
 /// Switch to an existing local branch, or create a local tracking branch from a remote.
 #[tauri::command]
 pub async fn git_checkout(
+    app: tauri::AppHandle,
     cwd: String,
     name: String,
     remote: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
         git_checkout_for(&expand_home(&cwd), &name, remote.as_deref())
     })
     .await
@@ -799,10 +837,17 @@ pub async fn git_checkout(
 
 /// Create a branch from HEAD and switch to it.
 #[tauri::command]
-pub async fn git_create_branch(cwd: String, name: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || git_create_branch_for(&expand_home(&cwd), &name))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn git_create_branch(
+    app: tauri::AppHandle,
+    cwd: String,
+    name: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::worktrees::naming::stabilize_branch(&app, &cwd)?;
+        git_create_branch_for(&expand_home(&cwd), &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Stash tracked and untracked local changes so a checkout can proceed.
@@ -1678,14 +1723,62 @@ fn git_github_repo_for(root: &Path) -> Result<String, String> {
     Ok(slug.to_string())
 }
 
+fn git_github_inbox_repos_for(
+    root: &Path,
+    run_gh: impl FnOnce(&Path, &[&str]) -> Result<String, String>,
+) -> Result<Vec<String>, String> {
+    // `gh` may default to upstream. Resolve the checkout's origin explicitly so
+    // the fork remains in Inbox even when the default points at upstream.
+    let remote_url =
+        git_remote_name(root).and_then(|remote| git_stdout(root, &["remote", "get-url", &remote]));
+    let mut args = vec!["repo", "view"];
+    if let Some(url) = remote_url.as_deref() {
+        args.push(url);
+    }
+    args.extend(["--json", "nameWithOwner,parent"]);
+    parse_github_inbox_repos(&run_gh(root, &args)?)
+}
+
+fn parse_github_inbox_repos(json: &str) -> Result<Vec<String>, String> {
+    #[derive(Deserialize)]
+    struct Owner {
+        login: String,
+    }
+    #[derive(Deserialize)]
+    struct Parent {
+        name: String,
+        owner: Owner,
+    }
+    #[derive(Deserialize)]
+    struct View {
+        #[serde(rename = "nameWithOwner")]
+        repo: String,
+        parent: Option<Parent>,
+    }
+    let view: View = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    let (owner, name) = split_github_repo(&view.repo)?;
+    let mut repos = vec![format!("{owner}/{name}")];
+    if let Some(parent) = view.parent {
+        let (owner, name) = split_github_repo(&format!("{}/{}", parent.owner.login, parent.name))?;
+        let repo = format!("{owner}/{name}");
+        if !repos[0].eq_ignore_ascii_case(&repo) {
+            repos.push(repo);
+        }
+    }
+    Ok(repos)
+}
+
 fn git_github_work_items_for(
     root: &Path,
+    repo: &str,
     kind: &str,
     assigned_to_me: bool,
     state: &str,
     search: &str,
     limit: u32,
 ) -> Result<Vec<GitHubWorkItem>, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let repo = format!("{owner}/{name}");
     let kind = kind.trim();
     if kind != "issue" && kind != "pr" {
         return Err("Unknown GitHub task kind".into());
@@ -1704,6 +1797,8 @@ fn git_github_work_items_for(
     let mut args = vec![
         kind.to_string(),
         "list".into(),
+        "--repo".into(),
+        repo.clone(),
         "--state".into(),
         state.into(),
         "--limit".into(),
@@ -1722,7 +1817,6 @@ fn git_github_work_items_for(
     }
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let json = gh_checked(root, &refs)?;
-    let repo = git_github_repo_for(root).unwrap_or_default();
     parse_github_work_items(&json, kind, &repo)
 }
 
@@ -1756,9 +1850,12 @@ fn git_github_work_item_for(
 
 fn git_github_work_item_details_for(
     root: &Path,
+    repo: &str,
     kind: &str,
     number: i64,
 ) -> Result<GitHubWorkItemDetails, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let repo = format!("{owner}/{name}");
     let kind = kind.trim();
     if kind != "issue" && kind != "pr" {
         return Err("Unknown GitHub task kind".into());
@@ -1769,7 +1866,10 @@ fn git_github_work_item_details_for(
     } else {
         "body,author"
     };
-    let json = gh_checked(root, &[kind, "view", &number, "--json", fields])?;
+    let json = gh_checked(
+        root,
+        &[kind, "view", &number, "--repo", &repo, "--json", fields],
+    )?;
     parse_github_work_item_details(&json)
 }
 
@@ -1910,6 +2010,7 @@ mutation InboxReviewReply($threadId: ID!, $body: String!) {
 
 fn git_github_work_item_thread_for(
     root: &Path,
+    repo: &str,
     kind: &str,
     number: i64,
 ) -> Result<GitHubWorkItemThread, String> {
@@ -1920,8 +2021,7 @@ fn git_github_work_item_thread_for(
     if number <= 0 {
         return Err("Invalid GitHub item number".into());
     }
-    let repo = git_github_repo_for(root)?;
-    let (owner, name) = split_github_repo(&repo)?;
+    let (owner, name) = split_github_repo(repo)?;
     let query = if kind == "pr" {
         GITHUB_PR_THREAD_QUERY
     } else {
@@ -1969,11 +2069,14 @@ fn github_comment_input<'a>(
 
 fn git_github_work_item_comment_for(
     root: &Path,
+    repo: &str,
     kind: &str,
     number: i64,
     body: &str,
     in_reply_to: &str,
 ) -> Result<String, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let repo = format!("{owner}/{name}");
     let (kind, body) = github_comment_input(kind, number, body)?;
     let reply = in_reply_to.trim();
     if !reply.is_empty() {
@@ -1981,7 +2084,18 @@ fn git_github_work_item_comment_for(
     }
     let number = number.to_string();
     with_temp_markdown(body, |path| {
-        let output = gh_checked(root, &[kind, "comment", &number, "--body-file", path])?;
+        let output = gh_checked(
+            root,
+            &[
+                kind,
+                "comment",
+                &number,
+                "--repo",
+                &repo,
+                "--body-file",
+                path,
+            ],
+        )?;
         github_url_from_output(&output, "GitHub did not return a comment URL")
     })
 }
@@ -2473,18 +2587,28 @@ fn github_avatar_url(login: &str) -> String {
     format!("https://avatars.githubusercontent.com/{encoded}?s=64")
 }
 
-fn git_github_pr_diff_for(root: &Path, number: i64) -> Result<GitHubPrDiff, String> {
+fn git_github_pr_diff_for(root: &Path, repo: &str, number: i64) -> Result<GitHubPrDiff, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let repo = format!("{owner}/{name}");
     if number <= 0 {
         return Err("Invalid pull request number".into());
     }
     let number = number.to_string();
     let json = gh_run(
         root,
-        &["pr", "view", &number, "--json", "files,additions,deletions"],
+        &[
+            "pr",
+            "view",
+            &number,
+            "--repo",
+            &repo,
+            "--json",
+            "files,additions,deletions",
+        ],
         false,
     )?;
     let mut diff = parse_github_pr_diff_meta(&json)?;
-    let patch = gh_run(root, &["pr", "diff", &number], true)?;
+    let patch = gh_run(root, &["pr", "diff", &number, "--repo", &repo], true)?;
     if patch.len() > MAX_PR_DIFF_BYTES {
         diff.truncated = true;
     } else {
@@ -5110,6 +5234,61 @@ mod tests {
             github_pr_head_filter("hardbeat920/monocode", "main").as_deref(),
             Some("hardbeat920:main")
         );
+    }
+
+    #[test]
+    fn github_inbox_discovers_parent_without_an_upstream_remote() {
+        let dir = tmp("github-inbox-fork");
+        git_run(&dir.0, &["init"]).unwrap();
+        git_run(
+            &dir.0,
+            &["remote", "add", "origin", "git@github.com:me/widget.git"],
+        )
+        .unwrap();
+        let repos = git_github_inbox_repos_for(&dir.0, |root, args| {
+            assert_eq!(root, dir.0);
+            assert_eq!(args, ["repo", "view", "git@github.com:me/widget.git", "--json", "nameWithOwner,parent"]);
+            Ok(r#"{"nameWithOwner":"me/widget","parent":{"name":"widget","owner":{"login":"acme"}}}"#.into())
+        }).unwrap();
+        assert_eq!(repos, ["me/widget", "acme/widget"]);
+
+        git_run(
+            &dir.0,
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/acme/widget.git",
+            ],
+        )
+        .unwrap();
+        git_run(&dir.0, &["config", "remote.upstream.gh-resolved", "base"]).unwrap();
+        let repos_with_upstream_default = git_github_inbox_repos_for(&dir.0, |_, args| {
+            assert_eq!(args[2], "git@github.com:me/widget.git");
+            Ok(r#"{"nameWithOwner":"me/widget","parent":{"name":"widget","owner":{"login":"acme"}}}"#.into())
+        }).unwrap();
+        assert_eq!(repos_with_upstream_default, repos);
+    }
+
+    #[test]
+    fn github_inbox_keeps_repositories_without_a_visible_parent() {
+        for json in [
+            r#"{"nameWithOwner":"acme/widget","parent":null}"#,
+            r#"{"nameWithOwner":"acme/widget"}"#,
+        ] {
+            assert_eq!(parse_github_inbox_repos(json).unwrap(), ["acme/widget"]);
+        }
+    }
+
+    #[test]
+    fn github_inbox_validates_and_deduplicates_repository_identities() {
+        let json = r#"{"nameWithOwner":"acme/widget","parent":{"name":"Widget","owner":{"login":"ACME"}}}"#;
+        assert_eq!(parse_github_inbox_repos(json).unwrap(), ["acme/widget"]);
+        assert!(parse_github_inbox_repos(r#"{"nameWithOwner":"widget"}"#).is_err());
+        assert!(parse_github_inbox_repos(
+            r#"{"nameWithOwner":"acme/widget","parent":{"name":"widget","owner":{"login":""}}}"#
+        )
+        .is_err());
     }
 
     #[test]
