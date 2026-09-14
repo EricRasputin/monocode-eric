@@ -17,6 +17,31 @@ one initial replacement with a `0.2.x` or newer build. Quit the old app first. I
 `~/Applications/MonoCode Fork.app` and `/Applications/MonoCode Fork.app` exist,
 launch the new copy from `/Applications` to avoid opening the old build.
 
+## Version display and upstream base
+
+Settings and the native About window show the fork version followed by its
+upstream base, for example **1.0.0 (0.1.46)**. The first number is our release;
+the number in parentheses is the upstream release whose source we incorporated.
+The About window and Settings also label that relationship explicitly.
+
+A fork-only change can ship as `1.0.1 (0.1.46)`. After incorporating upstream
+`v0.1.47`, a later fork release could be `1.0.2 (0.1.47)`. Updating the upstream
+base does not reset the fork's version sequence. The updater still compares the
+plain fork version, such as `1.0.2`.
+
+`upstream-release.json` records the upstream repository, release tag, version,
+and exact commit. Update this record in the same PR that incorporates an upstream
+release. It is bundled into the app, so the installed app continues to report
+its actual base even after newer upstream releases become available. It never
+fetches the latest upstream version to construct this label.
+
+Packaging verifies that the source version matches the record, the recorded tag
+in the upstream repository points to its commit, and that commit is an ancestor
+of the build. Both macOS
+packages must report the same upstream metadata. The GitHub release title uses
+the paired display, and `latest.json` includes the upstream record alongside the
+plain fork `version`.
+
 ## Releases
 
 Merges accumulate on `main`. The `CI` workflow runs checks for every push and PR,
