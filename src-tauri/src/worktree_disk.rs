@@ -829,7 +829,7 @@ fn volume_id(_path: &Path, metadata: &std::fs::Metadata) -> Result<String, Strin
 }
 #[cfg(unix)]
 #[allow(clippy::unnecessary_cast)] // statvfs field widths differ between Unix targets.
-fn volume(path: &Path) -> Result<VolumeUsage, String> {
+pub(super) fn volume(path: &Path) -> Result<VolumeUsage, String> {
     use std::os::unix::ffi::OsStrExt;
     let ancestor = existing_ancestor(path)?;
     let encoded =
@@ -859,7 +859,9 @@ fn process_alive(pid: u32) -> bool {
 #[path = "worktree_disk_windows.rs"]
 mod windows;
 #[cfg(windows)]
-use windows::{file_accounting, process_alive, volume, volume_id};
+pub(super) use windows::volume;
+#[cfg(windows)]
+use windows::{file_accounting, process_alive, volume_id};
 
 #[tauri::command(async)]
 pub fn worktree_disk_get(

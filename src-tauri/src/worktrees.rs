@@ -41,6 +41,9 @@ mod storage_maintenance;
 #[path = "worktree_automatic_retirement.rs"]
 pub(crate) mod automatic;
 
+#[path = "worktree_output_cleanup.rs"]
+pub(crate) mod output_cleanup;
+
 #[path = "worktree_merge.rs"]
 mod worktree_merge;
 
@@ -486,6 +489,7 @@ pub(crate) fn schema(conn: &Connection) -> rusqlite::Result<()> {
     naming::schema(conn)?;
     disk::schema(conn)?;
     automatic::schema(conn)?;
+    output_cleanup::schema(conn)?;
     Ok(())
 }
 
@@ -523,13 +527,19 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         disk: disk::DiskManager::default(),
     });
     environment::reset_interrupted(&app.state::<SessionStore>().open_auxiliary_conn()?)?;
+    output_cleanup::reset_interrupted(&app.state::<SessionStore>().open_auxiliary_conn()?)?;
     naming::recover(app, &app.state::<SessionStore>().open_auxiliary_conn()?)?;
     disk::start_monitor(app);
     // Maintenance starts after all native lifecycle services are registered.
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! { static GIT_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 fn git_command(root: &Path, args: &[&str]) -> Command {
+    #[cfg(test)]
+    GIT_INVOCATIONS.with(|count| count.set(count.get() + 1));
     let mut cmd = Command::new("git");
     crate::hide_window_console(&mut cmd);
     cmd.arg("--no-pager")
@@ -840,6 +850,15 @@ fn active_use_reason(
     windows: &HashMap<String, Vec<PathBuf>>,
     entry: &Owned,
 ) -> Result<Option<String>, String> {
+    live_use_reason(conn, windows, entry, true)
+}
+
+fn live_use_reason(
+    conn: &Connection,
+    windows: &HashMap<String, Vec<PathBuf>>,
+    entry: &Owned,
+    protect_unarchived: bool,
+) -> Result<Option<String>, String> {
     if windows.contains_key("$unregistered-windows") {
         return Ok(Some(
             "Waiting for open windows to register their workspace activity".into(),
@@ -893,8 +912,10 @@ fn active_use_reason(
         })
         .map_err(|e| e.to_string())?;
     for reference in references {
-        let (id, path, _archived, pinned) = reference.map_err(|e| e.to_string())?;
-        if id == entry.id || path_inside(&expand_home(&path), root) {
+        let (id, path, archived, pinned) = reference.map_err(|e| e.to_string())?;
+        if (pinned || (protect_unarchived && !archived))
+            && (id == entry.id || path_inside(&expand_home(&path), root))
+        {
             return Ok(Some(if pinned {
                 format!("Conversation {id} is pinned")
             } else {

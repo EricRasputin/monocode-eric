@@ -64,6 +64,7 @@ impl ProjectScope {
 pub(super) enum SetupOrigin {
     Fresh,
     Restored,
+    Cleaned,
 }
 
 impl SetupOrigin {
@@ -71,6 +72,7 @@ impl SetupOrigin {
         match self {
             Self::Fresh => "fresh",
             Self::Restored => "restored",
+            Self::Cleaned => "cleaned",
         }
     }
 }
@@ -452,7 +454,7 @@ pub(super) fn save_settings(
     load_settings(conn, scope)
 }
 
-fn settings_at_checkout_root(
+pub(super) fn settings_at_checkout_root(
     scope: &ProjectScope,
     settings: &EnvironmentSettings,
 ) -> EnvironmentSettings {
@@ -933,7 +935,7 @@ fn normalize_settings(mut settings: EnvironmentSettings) -> Result<EnvironmentSe
     }
     for copy in &settings.copy_paths {
         for disposable in &settings.disposable_paths {
-            if paths_overlap(copy, disposable) {
+            if copy == disposable || disposable.starts_with(&format!("{copy}/")) {
                 return Err(format!(
                     "Copy path '{copy}' overlaps disposable path '{disposable}'"
                 ));
@@ -1000,7 +1002,7 @@ fn paths_overlap(first: &str, second: &str) -> bool {
 /// projects, without walking dependency/build trees. A folder name alone is
 /// not evidence that its contents are generated. Require an ignored, real
 /// directory with no tracked files and no symlink ancestors as well.
-fn automatic_disposable_paths(root: &Path) -> Result<Vec<String>, String> {
+pub(super) fn recognized_output_paths(root: &Path) -> Result<Vec<String>, String> {
     let raw = super::git(
         root,
         &[
@@ -1043,8 +1045,14 @@ fn automatic_disposable_paths(root: &Path) -> Result<Vec<String>, String> {
             candidates.insert(relative(output));
         }
     }
+    let mut candidates: Vec<_> = candidates.into_iter().collect();
+    candidates.sort();
+    Ok(candidates)
+}
+
+fn automatic_disposable_paths(root: &Path) -> Result<Vec<String>, String> {
     let mut disposable = Vec::new();
-    for path in candidates {
+    for path in recognized_output_paths(root)? {
         if matches!(safe_metadata(root, &path)?, Some(metadata) if metadata.is_dir())
             && validate_git_policy(root, &path, true).is_ok()
         {
@@ -1209,8 +1217,11 @@ fn validate_policy_paths(root: &Path, settings: &EnvironmentSettings) -> Result<
     Ok(())
 }
 
-fn validate_git_policy(root: &Path, path: &str, directory: bool) -> Result<(), String> {
-    let tracked = super::git(root, &["ls-files", "-z", "--", path])?;
+pub(super) fn validate_git_policy(root: &Path, path: &str, directory: bool) -> Result<(), String> {
+    let tracked = super::git(
+        root,
+        &["ls-files", "-z", "--", &format!(":(literal){path}")],
+    )?;
     if !tracked.is_empty() {
         return Err(format!("Configured local path is tracked by Git: {path}"));
     }
@@ -1234,7 +1245,10 @@ fn validate_git_policy(root: &Path, path: &str, directory: bool) -> Result<(), S
 
 /// Inspect each existing ancestor but never enter a configured directory. This
 /// permits ordinary symlinks inside disposable dependency trees.
-fn safe_metadata(root: &Path, relative: &str) -> Result<Option<std::fs::Metadata>, String> {
+pub(super) fn safe_metadata(
+    root: &Path,
+    relative: &str,
+) -> Result<Option<std::fs::Metadata>, String> {
     let mut current = root.to_path_buf();
     let parts: Vec<_> = Path::new(relative).components().collect();
     for (index, component) in parts.iter().enumerate() {
@@ -1406,10 +1420,10 @@ fn find_setup_row(conn: &Connection, requested_path: &str) -> Result<Option<Setu
                 common: row.get(1)?,
                 repo: row.get(2)?,
                 path: row.get(3)?,
-                origin: if origin == "restored" {
-                    SetupOrigin::Restored
-                } else {
-                    SetupOrigin::Fresh
+                origin: match origin.as_str() {
+                    "restored" => SetupOrigin::Restored,
+                    "cleaned" => SetupOrigin::Cleaned,
+                    _ => SetupOrigin::Fresh,
                 },
                 archive_id: row.get(5)?,
                 status: row.get(6)?,
@@ -1439,6 +1453,9 @@ fn build_operation(
     };
     let project = scope.project_path_in(Path::new(&row.path));
     let (settings, mut files) = match row.origin {
+        // Output cleanup keeps all selected configuration in place. Never copy
+        // primary-checkout files or replay tombstones over unfinished work.
+        SetupOrigin::Cleaned => (load_settings(conn, &scope)?, Vec::new()),
         SetupOrigin::Fresh => {
             let settings = load_settings(conn, &scope)?;
             let files = snapshot_copy_files(Path::new(&scope.main_path), &settings)?

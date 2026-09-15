@@ -37,7 +37,7 @@ fn identity(path: &Path) -> Result<(Vec<u16>, String), String> {
 pub(super) fn volume_id(path: &Path, _metadata: &std::fs::Metadata) -> Result<String, String> {
     identity(path).map(|(_, id)| id)
 }
-pub(super) fn volume(path: &Path) -> Result<VolumeUsage, String> {
+pub(crate) fn volume(path: &Path) -> Result<VolumeUsage, String> {
     let ancestor = existing_ancestor(path)?;
     let (mount, id) = identity(&ancestor)?;
     let mut available = 0;

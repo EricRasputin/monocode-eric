@@ -440,7 +440,7 @@ fn maintain_with(
     Ok(())
 }
 
-fn protection(
+pub(super) fn protection(
     app: &AppHandle,
     windows: &HashMap<String, Vec<PathBuf>>,
 ) -> HashMap<String, Vec<PathBuf>> {

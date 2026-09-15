@@ -847,3 +847,67 @@ fn automatic_success_and_failure_never_contact_a_configured_remote() {
     assert_eq!(item(&f).status, "complete");
     assert!(!marker.exists());
 }
+
+#[test]
+fn cleared_outputs_can_retire_after_archive_without_reinstalling_dependencies() {
+    let f = Fixture::new();
+    std::fs::write(f.repo.join("package.json"), "{}").unwrap();
+    git(&f.repo, &["add", "package.json"]).unwrap();
+    git(&f.repo, &["commit", "-m", "Manifest"]).unwrap();
+    let entry = f.create("cleared-then-archived");
+    let scope = environment::scope_for_entry(&f.conn, &entry).unwrap();
+    environment::save_settings(
+        &f.conn,
+        &scope,
+        &environment::EnvironmentSettings {
+            copy_paths: vec!["node_modules/local.env".into()],
+            setup_command: "exit 99".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::create_dir_all(Path::new(&entry.path).join("node_modules")).unwrap();
+    std::fs::write(
+        Path::new(&entry.path).join("node_modules/local.env"),
+        "local secret",
+    )
+    .unwrap();
+    std::fs::write(
+        Path::new(&entry.path).join("node_modules/output"),
+        "generated",
+    )
+    .unwrap();
+    session(&f, &entry, "unarchived", false);
+    super::super::output_cleanup::tests::clear_for_retirement(&f, &entry);
+    assert!(environment::needs_setup(&f.conn, &entry.path).unwrap());
+    configure(&f, Mode::Automatic);
+    f.conn
+        .execute("UPDATE sessions SET archived = 1", [])
+        .unwrap();
+    run(&f);
+    assert_eq!(item(&f).status, "complete");
+    assert!(!Path::new(&entry.path).exists());
+    assert!(ref_oid(&f.repo, &format!("refs/heads/{}", entry.branch))
+        .unwrap()
+        .is_some());
+    let attempts: i64 = f
+        .conn
+        .query_row(
+            "SELECT attempts FROM worktree_environment_setup WHERE worktree_id = ?1",
+            [&entry.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(attempts, 0);
+    assert!(storage::usage(&f.conn).unwrap().used_bytes > 0);
+    assert_eq!(
+        f.conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE archived = 1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+}
