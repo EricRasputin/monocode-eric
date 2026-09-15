@@ -298,6 +298,8 @@ pub fn run() {
             linear::linear_issue_thread,
             linear::linear_issue_comment,
             worktrees::worktree_list,
+            worktrees::disk::worktree_disk_get,
+            worktrees::disk::worktree_disk_settings_set,
             worktrees::worktree_settings_set,
             worktrees::worktree_storage_get,
             worktrees::worktree_storage_limit_set,

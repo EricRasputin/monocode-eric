@@ -7,8 +7,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use super::{
-    checkouts, environment, owned, path_inside, path_to_js, ref_oid, repository, resolve_commit,
-    Owned, WorktreeHost,
+    checkouts, disk, environment, owned, path_inside, path_to_js, ref_oid, repository,
+    resolve_commit, Owned, WorktreeHost,
 };
 use crate::session_store::SessionStore;
 
@@ -169,7 +169,7 @@ pub fn worktree_setup(
     store: State<'_, SessionStore>,
     host: State<'_, WorktreeHost>,
     path: String,
-) -> Result<(), String> {
+) -> Result<(), disk::WorkspaceError> {
     let conn = store.open_auxiliary_conn()?;
     let Some(candidate) = owned(&conn)?
         .into_iter()
@@ -179,8 +179,8 @@ pub fn worktree_setup(
         return Ok(());
     };
     let common = candidate.common.clone();
-    coordinate_setup(&candidate.path, || {
-        let operation = {
+    let result = coordinate_setup(&candidate.path, || {
+        let Some((operation, capacity)) = disk::coordinate(&host.disk, &conn, || {
             let _repository = host.repository_guard(&common)?;
             let mut windows = host.operation_guard()?;
             for changed in super::naming::reconcile_repository(&conn, &common)? {
@@ -192,10 +192,23 @@ pub fn worktree_setup(
                 return Err("Worktree ownership changed before setup could start".into());
             };
             validate_checkout(&entry, &path)?;
+            if !environment::needs_setup(&conn, &path)? {
+                disk::release_handoff(&host.disk, &conn, &entry.path)?;
+                super::naming::emit(&app, super::naming::apply_pending(&conn, &entry.id));
+                return Ok(None);
+            }
+            let scope = environment::scope_for_entry(&conn, &entry)?;
+            let capacity = host.disk.admit(
+                &conn,
+                &entry.path,
+                &scope,
+                "setup",
+                environment::needs_setup(&conn, &path)?,
+            )?;
             let operation = match environment::begin_setup(&conn, &path)? {
                 environment::BeginSetup::Skip => {
                     super::naming::emit(&app, super::naming::apply_pending(&conn, &entry.id));
-                    return Ok(());
+                    return Ok(None);
                 }
                 environment::BeginSetup::Run(operation) => operation,
             };
@@ -204,7 +217,10 @@ pub fn worktree_setup(
             if !leases.contains(&root) {
                 leases.push(root);
             }
-            operation
+            Ok(Some((operation, capacity)))
+        })?
+        else {
+            return Ok(());
         };
 
         let progress = |phase: &str| {
@@ -236,9 +252,13 @@ pub fn worktree_setup(
             (Ok(()), environment::FinishSetup::Retry(error)) => Err(error),
             (result, _) => result,
         };
+        drop(capacity);
+        let _ = app.emit("worktree-disk-changed", ());
         progress(if result.is_ok() { "ready" } else { "failed" });
         result
-    })?;
+    });
+    disk::refresh(&app);
+    result?;
     let _repository = host.repository_guard(&common)?;
     let mut windows = host.operation_guard()?;
     let entry = owned(&conn)?

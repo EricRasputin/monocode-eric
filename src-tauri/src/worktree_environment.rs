@@ -734,6 +734,10 @@ pub(super) fn mark_pending(
 /// Snapshot everything the unlocked runner needs, then atomically record the
 /// attempt. The returned operation owns any secret bytes; callers need not keep
 /// a database or lifecycle guard while it runs.
+pub(super) fn needs_setup(conn: &Connection, path: &str) -> Result<bool, String> {
+    Ok(find_setup_row(conn, path)?.is_some_and(|row| row.status != "ready"))
+}
+
 pub(super) fn begin_setup(conn: &Connection, requested_path: &str) -> Result<BeginSetup, String> {
     let Some(row) = find_setup_row(conn, requested_path)? else {
         return Ok(BeginSetup::Skip);

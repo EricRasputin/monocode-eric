@@ -1,3 +1,4 @@
+use super::tests::create;
 use super::*;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -99,6 +100,7 @@ impl RetirementFixture {
             root: dir.join("owned checkouts"),
             windows: Mutex::new(HashMap::new()),
             repositories: RepositoryReservations::default(),
+            disk: disk::DiskManager::default(),
         };
         Self {
             dir,

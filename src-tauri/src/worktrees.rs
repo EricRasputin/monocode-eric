@@ -18,6 +18,9 @@ use crate::session_store::SessionStore;
 #[path = "worktree_remote_git.rs"]
 mod remote_git;
 
+#[path = "worktree_disk.rs"]
+pub(crate) mod disk;
+
 #[path = "worktree_environment.rs"]
 mod environment;
 #[cfg(all(test, unix))]
@@ -44,6 +47,7 @@ pub struct WorktreeHost {
     // A checkout cannot be opened between its last safety check and removal.
     windows: Mutex<HashMap<String, Vec<PathBuf>>>,
     repositories: RepositoryReservations,
+    disk: disk::DiskManager,
 }
 
 #[derive(Default)]
@@ -475,6 +479,7 @@ pub(crate) fn schema(conn: &Connection) -> rusqlite::Result<()> {
         [],
     )?;
     naming::schema(conn)?;
+    disk::schema(conn)?;
     Ok(())
 }
 
@@ -509,9 +514,11 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         root,
         windows: Mutex::new(HashMap::new()),
         repositories: RepositoryReservations::default(),
+        disk: disk::DiskManager::default(),
     });
     environment::reset_interrupted(&app.state::<SessionStore>().open_auxiliary_conn()?)?;
     naming::recover(app, &app.state::<SessionStore>().open_auxiliary_conn()?)?;
+    disk::start_monitor(app);
     storage_maintenance::schedule(app);
     // Cleanup is only invoked with the IDs the user reviewed and confirmed.
     Ok(())
@@ -2923,6 +2930,7 @@ fn execute_retirement(
         root: PathBuf::new(),
         windows: Mutex::new(windows.clone()),
         repositories: RepositoryReservations::default(),
+        disk: disk::DiskManager::default(),
     };
     execute_retirement_coordinated_with(conn, &host, plan_id, selections, |windows| windows.clone())
 }
@@ -3538,6 +3546,10 @@ fn create_with_naming(
     {
         return Err("The worktree path or branch already exists; choose another task".into());
     }
+    let project_scope = environment::scope_for_cwd(cwd)?;
+    let _capacity = host
+        .disk
+        .admit(conn, &path, &project_scope, "create", true)?;
     let creation_ref = ensure_creation_ref(Path::new(&repo), id, &commit)?;
     // Persist ownership and pending setup together before creating files. A
     // crash after Git succeeds must not turn the next open into a setup skip.
@@ -3555,7 +3567,6 @@ fn create_with_naming(
         active_retirement_plan_id: None,
         pending_retirement_plan_id: None,
     };
-    let project_scope = environment::scope_for_cwd(cwd)?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     tx.execute("INSERT INTO managed_worktrees (id, repo, common_dir, path, branch, base_ref, last_used, creation_oid) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![id, repo, common, path, branch, base_ref, entry.last_used, commit]).map_err(|e| e.to_string())?;
     environment::mark_pending(
@@ -3595,6 +3606,7 @@ fn create_with_naming(
         return Err("Saved worktree creation intent changed before completion".into());
     }
     entry.creation_oid = None;
+    _capacity.handoff()?;
     Ok(entry)
 }
 
@@ -3941,26 +3953,24 @@ pub fn worktree_create(
     session_id: String,
     name: String,
     base_ref: Option<String>,
-) -> Result<String, String> {
-    let common = repository_common(&cwd)?;
-    let _repository = host.repository_guard(&common)?;
-    let mut windows = host.operation_guard()?;
-    let entry = create(
-        &store.open_auxiliary_conn()?,
-        &host,
-        &cwd,
-        &session_id,
-        &name,
-        base_ref.as_deref(),
-    )?;
-    windows
-        .entry(window.label().into())
-        .or_default()
-        .push(PathBuf::from(&entry.path));
-    scoped_path(&cwd, &entry.path)
+) -> Result<String, disk::WorkspaceError> {
+    let conn = store.open_auxiliary_conn()?;
+    let result = disk::coordinate(&host.disk, &conn, || {
+        let common = repository_common(&cwd)?;
+        let _repository = host.repository_guard(&common)?;
+        let mut windows = host.operation_guard()?;
+        let entry = create(&conn, &host, &cwd, &session_id, &name, base_ref.as_deref())?;
+        windows
+            .entry(window.label().into())
+            .or_default()
+            .push(PathBuf::from(&entry.path));
+        scoped_path(&cwd, &entry.path)
+    });
+    disk::refresh(window.app_handle());
+    result.map_err(Into::into)
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareWorktree {
     cwd: String,
@@ -3982,23 +3992,27 @@ pub fn worktree_prepare(
     store: State<'_, SessionStore>,
     host: State<'_, WorktreeHost>,
     request: PrepareWorktree,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, disk::WorkspaceError> {
     let conn = store.open_auxiliary_conn()?;
-    let common = preparation_common(&conn, &request)?;
-    let _repository = host.repository_guard(&common)?;
-    let mut windows = host.operation_guard()?;
-    for changed in naming::reconcile_repository(&conn, &common)? {
-        naming::emit(window.app_handle(), Ok(Some(changed)));
-    }
-    let work_path = prepare(&conn, &host, request)?;
-    if let Some(path) = &work_path {
-        let leases = windows.entry(window.label().into()).or_default();
-        let path = PathBuf::from(path);
-        if !leases.contains(&path) {
-            leases.push(path);
+    let result = disk::coordinate(&host.disk, &conn, || {
+        let common = preparation_common(&conn, &request)?;
+        let _repository = host.repository_guard(&common)?;
+        let mut windows = host.operation_guard()?;
+        for changed in naming::reconcile_repository(&conn, &common)? {
+            naming::emit(window.app_handle(), Ok(Some(changed)));
         }
-    }
-    Ok(work_path)
+        let work_path = prepare(&conn, &host, request.clone())?;
+        if let Some(path) = &work_path {
+            let leases = windows.entry(window.label().into()).or_default();
+            let path = PathBuf::from(path);
+            if !leases.contains(&path) {
+                leases.push(path);
+            }
+        }
+        Ok(work_path)
+    });
+    disk::refresh(window.app_handle());
+    result.map_err(Into::into)
 }
 /// Standalone filesystem access may start in a missing managed checkout or a
 /// plain folder. Resolve ownership before asking Git about a directory that
@@ -4051,7 +4065,19 @@ fn prepare(
         {
             return Err("Worktree does not belong to this project".into());
         }
+        let scope = environment::scope_for_entry(conn, entry)?;
+        let _capacity = if !Path::new(&entry.path).exists() {
+            Some(
+                host.disk
+                    .admit(conn, &entry.path, &scope, "restore", true)?,
+            )
+        } else {
+            None
+        };
         open_owned(conn, entry)?;
+        if let Some(capacity) = _capacity {
+            capacity.handoff()?;
+        }
         let target = if let Some(path) = path {
             let target = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
             let root = std::fs::canonicalize(&entry.path).map_err(|e| e.to_string())?;
@@ -4225,6 +4251,7 @@ pub fn worktree_retire(
         &plan_id,
         &selections,
     );
+    disk::refresh(&app);
     let _ = app.emit("worktree-storage-changed", ());
     storage_maintenance::schedule(&app);
     result
@@ -4254,6 +4281,28 @@ pub fn worktree_storage_limit_set(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub(super) fn create(
+        conn: &Connection,
+        host: &WorktreeHost,
+        cwd: &str,
+        id: &str,
+        name: &str,
+        base_ref: Option<&str>,
+    ) -> Result<Owned, String> {
+        disk::coordinate(&host.disk, conn, || {
+            super::create(conn, host, cwd, id, name, base_ref)
+        })
+    }
+    pub(super) fn prepare(
+        conn: &Connection,
+        host: &WorktreeHost,
+        request: PrepareWorktree,
+    ) -> Result<Option<String>, String> {
+        disk::coordinate(&host.disk, conn, || {
+            super::prepare(conn, host, request.clone())
+        })
+    }
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     pub(super) struct Fixture {
@@ -4300,6 +4349,7 @@ mod tests {
                 root: dir.join("owned"),
                 windows: Mutex::new(HashMap::new()),
                 repositories: RepositoryReservations::default(),
+                disk: disk::DiskManager::default(),
             };
             Self {
                 dir,
@@ -4309,7 +4359,7 @@ mod tests {
                 host,
             }
         }
-        fn create(&self, id: &str) -> Owned {
+        pub(super) fn create(&self, id: &str) -> Owned {
             let entry = create(
                 &self.conn,
                 &self.host,
@@ -4318,6 +4368,13 @@ mod tests {
                 "Fix / a thing!",
                 Some("main"),
             )
+            .unwrap();
+            let scope = environment::scope_for_entry(&self.conn, &entry).unwrap();
+            let _capacity = disk::coordinate(&self.host.disk, &self.conn, || {
+                self.host
+                    .disk
+                    .admit(&self.conn, &entry.path, &scope, "setup", true)
+            })
             .unwrap();
             if let environment::BeginSetup::Run(operation) =
                 environment::begin_setup(&self.conn, &entry.path).unwrap()
@@ -4798,6 +4855,7 @@ mod tests {
             root: PathBuf::new(),
             windows: Mutex::new(HashMap::new()),
             repositories: RepositoryReservations::default(),
+            disk: disk::DiskManager::default(),
         });
         let held = host.repository_guard("repo-a").unwrap();
         let (same_tx, same_rx) = mpsc::channel();

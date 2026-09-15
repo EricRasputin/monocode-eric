@@ -1,5 +1,6 @@
 //! Exercise the environment through the same create/review/retire/open seams
 //! used by the native commands, with real Git and an on-disk database.
+use super::tests::{create, prepare};
 use super::*;
 
 struct EnvironmentFixture {
@@ -56,6 +57,7 @@ impl EnvironmentFixture {
             root: dir.join("worktrees"),
             windows: Mutex::new(HashMap::new()),
             repositories: RepositoryReservations::default(),
+            disk: disk::DiskManager::default(),
         };
         let fixture = Self {
             dir,

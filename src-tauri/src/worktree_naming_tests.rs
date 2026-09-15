@@ -1,5 +1,5 @@
 use super::*;
-use crate::worktrees::tests::Fixture;
+use crate::worktrees::tests::{create, Fixture};
 
 const TOKEN: &str = "naming-request-one";
 
@@ -142,15 +142,17 @@ fn naming_serializes_two_windows_competing_for_the_same_branch() {
 }
 
 fn draft(f: &Fixture, id: &str) -> Owned {
-    create_with_naming(
-        &f.conn,
-        &f.host,
-        &path_to_js(&f.repo),
-        id,
-        "Raw verbose request",
-        Some("main"),
-        Some(TOKEN),
-    )
+    crate::worktrees::disk::coordinate(&f.host.disk, &f.conn, || {
+        create_with_naming(
+            &f.conn,
+            &f.host,
+            &path_to_js(&f.repo),
+            id,
+            "Raw verbose request",
+            Some("main"),
+            Some(TOKEN),
+        )
+    })
     .unwrap()
 }
 
