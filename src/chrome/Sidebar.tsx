@@ -16,12 +16,14 @@ import {
   Pin,
   Plus,
   Search,
+  Share,
   Settings,
   StickyNote,
 } from "./icons";
 import {
   memo,
   useEffect,
+  useId,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -45,6 +47,7 @@ import { prettyParent, projectKey, projectName } from "../lib/paths";
 import type { OpenFileFn } from "../lib/search";
 import { sessionDisplayTitle } from "../lib/session";
 import { nextUnseenFinishedSessions } from "../lib/sessionDone";
+import { orchestrationTaskLabel } from "../lib/orchestrationSummary";
 import {
   orderedSessionActionIds,
   pruneSessionSelection,
@@ -132,6 +135,7 @@ import { ColorPickerPopover, ColorSwatchRow } from "./ColorPickerPopover";
 import { ExplorerMenu, type ExplorerMenuItem } from "./ExplorerMenu";
 import { FileTree } from "./FileTree";
 import { HarnessIcon } from "./HarnessIcon";
+import { LiveAgentsPreview } from "./LiveAgentsPreview";
 import { ProjectRail } from "./ProjectRail";
 import { RailAction } from "./RailAction";
 import { TerminalSpinner } from "./TerminalSpinner";
@@ -182,6 +186,8 @@ type Props = {
   cwd: string;
   /** Working copy for Changes / explorer git. Falls back to `cwd`. */
   gitCwd?: string;
+  transcriptOnly?: boolean;
+  onPrepareWorkspace?: () => void;
   open: boolean;
   sessions: SessionSummary[];
   busySessionIds: Set<string>;
@@ -272,6 +278,8 @@ type Props = {
 function SidebarComponent({
   cwd,
   gitCwd,
+  transcriptOnly = false,
+  onPrepareWorkspace,
   open,
   sessions,
   busySessionIds,
@@ -550,8 +558,8 @@ function SidebarComponent({
     !notesActive &&
     !settingsOpen &&
     inProject;
-  const gitStatuses = useGitFileStatuses(gitRoot, open && tab === "files");
-  const changeStats = useProjectDiffStats(gitRoot, open);
+  const gitStatuses = useGitFileStatuses(gitRoot, !transcriptOnly && open && tab === "files");
+  const changeStats = useProjectDiffStats(gitRoot, !transcriptOnly && open);
 
   useEffect(() => {
     setSessionListLimit(LIST_PAGE_SIZE);
@@ -1215,7 +1223,9 @@ function SidebarComponent({
             tab === "files" ? "" : "hidden"
           }`}
         >
-          {filesSearchOpen ? (
+          {transcriptOnly ? (
+            <button className="m-3 rounded border border-content/10 p-3 text-xs" onClick={onPrepareWorkspace}>Prepare workspace to browse files</button>
+          ) : filesSearchOpen ? (
             <ProjectSearch
               cwd={gitRoot}
               focusToken={searchFocusToken}
@@ -1545,7 +1555,9 @@ function SidebarComponent({
             </div>
           )}
         </div>
-        {tab === "changes" ? (
+        {tab === "changes" && transcriptOnly ? (
+          <button className="m-3 rounded border border-content/10 p-3 text-xs" onClick={onPrepareWorkspace}>Prepare workspace to view changes</button>
+        ) : tab === "changes" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <SourceControl
               cwd={gitRoot}
@@ -1565,6 +1577,11 @@ function SidebarComponent({
         ) : null}
         {showSidebarFooter ? (
           <>
+            <LiveAgentsPreview
+              agents={liveAgents}
+              activeSessionId={activeSessionId}
+              onSelect={onSelectAgent}
+            />
             <SidebarUpdateFooter
               update={updateNotice}
               onOpenWhatsNew={onOpenWhatsNew}
@@ -2348,15 +2365,22 @@ function SessionCard({
 }) {
   const skipClickUntil = useRef(0);
   const prefetchTimer = useRef<number | null>(null);
+  const orchestrationTooltipRootRef = useRef<HTMLDivElement>(null);
+  const orchestrationTooltipId = useId();
   const [dragging, setDragging] = useState(false);
+  const [orchestrationTooltipOpen, setOrchestrationTooltipOpen] =
+    useState(false);
   const orchestration = session.orchestration;
+  const orchestrationExpanded =
+    !!orchestration && (isActive || isSelected || busy);
+  const orchestrationDone =
+    orchestration?.tasks.filter((task) => task.status === "completed").length ??
+    0;
   const title = sessionDisplayTitle(session.title, session.harness);
   const gitLabel = formatGitLabel(session.repo, session.branch);
   const time = formatRelative(session.updatedAt, now);
-  // A lead card always shows its model, even compact: it heads a group of
-  // agents that each name theirs, so the row naming none reads as a gap.
   const model =
-    compact && !orchestration
+    compact && !orchestrationExpanded
       ? null
       : resolveModel(session.harness, session.model).name;
   const statusClass = needsApproval
@@ -2584,8 +2608,13 @@ function SessionCard({
   };
 
   const archiveLabel = session.archived ? "Unarchive" : "Archive";
-  const cardPaddingY = orchestration
-    ? "py-2.5"
+  // Expanding an orchestration card must not move its existing header. Keep
+  // the collapsed top inset and give only the new detail area extra room at
+  // the bottom.
+  const cardPaddingY = orchestrationExpanded
+    ? compact
+      ? "pb-2.5 pt-1.5"
+      : "pb-2.5 pt-2"
     : compact
       ? "py-1.5"
       : "py-2";
@@ -2617,10 +2646,8 @@ function SessionCard({
                 ? "bg-content/20 text-content border-content/30 border-dashed"
                 : isActive
                   ? "bg-content/10 text-content border-transparent"
-                  : // A lead rests at the tone others only reach on hover, so
-                    // its card reads as a group even when nothing is selected.
-                    `text-content/80 hover:text-content border-transparent ${
-                      orchestration
+                  : `text-content/80 hover:text-content border-transparent ${
+                      orchestrationExpanded
                         ? "bg-content/5 hover:bg-content/10"
                         : "hover:bg-content/5"
                     }`
@@ -2637,7 +2664,7 @@ function SessionCard({
           data-session-select={session.id}
           onKeyDown={onKeyDown}
         >
-          {compact && !orchestration ? null : (
+          {compact && !orchestrationExpanded ? null : (
             <span className="relative flex items-center gap-2">
               <span className="flex min-w-0 flex-1 items-center gap-1.5">
                 <HarnessIcon
@@ -2656,7 +2683,7 @@ function SessionCard({
           )}
           <span
             className={`relative flex min-w-0 items-center gap-1.5 ${
-              compact && !orchestration ? "" : "mt-1"
+              compact && !orchestrationExpanded ? "" : "mt-1"
             }`}
           >
             {session.pinned ? (
@@ -2668,7 +2695,7 @@ function SessionCard({
             <span className="min-w-0 flex-1 line-clamp-1 text-[13px] font-semibold leading-snug text-content">
               {title}
             </span>
-            {compact && !orchestration ? (
+            {compact && !orchestrationExpanded ? (
               <span className="flex shrink-0 items-center gap-1.5">
                 {linkedUpdateDot}
                 {status}
@@ -2676,10 +2703,10 @@ function SessionCard({
             ) : null}
           </span>
         </div>
-        {orchestration ? (
+        {orchestrationExpanded ? (
           <OrchestrationSidebarAgents
             leadId={session.id}
-            summary={orchestration}
+            summary={orchestration!}
           />
         ) : null}
         <span className="relative mt-1 flex items-center gap-2">
@@ -2691,7 +2718,7 @@ function SessionCard({
           ) : (
             <span className="min-w-0 flex-1" />
           )}
-          <span className="flex shrink-0 items-center gap-1">
+          <span className="relative flex shrink-0 items-center gap-px">
             {onArchive ? (
               <button
                 type="button"
@@ -2710,9 +2737,96 @@ function SessionCard({
               </button>
             ) : null}
             {workItemBadge}
+            {orchestration ? (
+              <div
+                ref={orchestrationTooltipRootRef}
+                className="relative shrink-0"
+                onMouseEnter={() => setOrchestrationTooltipOpen(true)}
+                onMouseLeave={() => setOrchestrationTooltipOpen(false)}
+              >
+                <button
+                  type="button"
+                  data-no-drag
+                  data-tauri-drag-region="false"
+                  data-orchestration-icon
+                  aria-label={`Orchestrator, ${orchestration.tasks.length} ${
+                    orchestration.tasks.length === 1 ? "subagent" : "subagents"
+                  }, ${orchestrationDone} done`}
+                  aria-describedby={
+                    orchestrationTooltipOpen
+                      ? orchestrationTooltipId
+                      : undefined
+                  }
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onFocus={() => setOrchestrationTooltipOpen(true)}
+                  onBlur={() => setOrchestrationTooltipOpen(false)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOrchestrationTooltipOpen(false);
+                    onSelect(session.id, { shiftKey: event.shiftKey });
+                  }}
+                  className="grid size-5 shrink-0 place-items-center rounded-md text-fuchsia-300/65 hover:bg-content/10 hover:text-fuchsia-200/90"
+                >
+                  <Share className="size-3" />
+                </button>
+              </div>
+            ) : null}
           </span>
         </span>
       </div>
+      {orchestration && orchestrationTooltipOpen ? (
+        <Popover
+          anchor={orchestrationTooltipRootRef}
+          side="right"
+          align="end"
+          width={248}
+          maxHeight={320}
+          role="tooltip"
+          id={orchestrationTooltipId}
+          className="pointer-events-none overflow-y-auto p-2.5"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] font-semibold text-content/85">
+              Subagents
+            </span>
+            <span className="shrink-0 text-[10px] tabular-nums text-content/45">
+              {orchestrationDone}/{orchestration.tasks.length} done
+            </span>
+          </div>
+          <div className="mt-1.5 flex flex-col gap-0.5">
+            {orchestration.tasks.map((task) => {
+              const label = orchestrationTaskLabel(task, orchestration);
+              return (
+                <div
+                  key={task.sessionId}
+                  className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1"
+                >
+                  <HarnessIcon
+                    harness={task.harness}
+                    className="size-3.5 shrink-0 opacity-75"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-content/75">
+                    {task.title}
+                  </span>
+                  <span
+                    className={`shrink-0 text-[10px] ${
+                      task.needsInput || task.status === "failed"
+                        ? "text-amber-400"
+                        : label === "Working"
+                          ? "text-accent"
+                          : task.status === "completed"
+                            ? "text-emerald-400"
+                            : "text-content/45"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Popover>
+      ) : null}
     </div>
   );
 }

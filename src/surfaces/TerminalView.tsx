@@ -1,3 +1,4 @@
+import { WorkspaceAccess } from "./WorkspaceAccess";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import {
@@ -108,7 +109,15 @@ function oscColors() {
   return isLightScheme() ? OSC_LIGHT : OSC_DARK;
 }
 
-export function TerminalView({ id, cwd, active, onMetaChange }: Props) {
+export function TerminalView(props: Props) {
+  return (
+    <WorkspaceAccess cwd={props.cwd}>
+      {(cwd) => <PreparedTerminalView {...props} cwd={cwd} />}
+    </WorkspaceAccess>
+  );
+}
+
+function PreparedTerminalView({ id, cwd, active, onMetaChange }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);

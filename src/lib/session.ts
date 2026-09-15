@@ -72,10 +72,13 @@ export type PlanBlockMeta = {
   edited?: boolean;
 };
 
-export type PlanBuildTarget = {
+export type ModelTarget = {
   harness: HarnessId;
   model: string;
+  modelSettings: Record<string, string>;
 };
+
+export type PlanBuildTarget = ModelTarget;
 
 export type HandoffStatus = "preparing" | "ready";
 
@@ -328,6 +331,8 @@ export type Session = {
   /** Isolated checkout; cwd remains the project identity for history/grouping. */
   worktreeCwd?: string;
   workspaceChoice?: WorkspaceChoice;
+  /** Saved messages only. Identity is retained, but this view owns no workspace lease. */
+  transcriptOnly?: boolean;
   /** One-shot composer text when opening a session from Inbox. */
   composerSeed?: string;
   /** Inbox issue/PR chip shown above the composer. In-memory, one-shot. */

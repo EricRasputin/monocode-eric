@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { listWorktrees, type WorktreeOverview } from "../lib/worktrees";
 import { subscribeGitChanged } from "../lib/fs";
+import { listen } from "@tauri-apps/api/event";
 
 type Snapshot = {
   overview: WorktreeOverview | null;
@@ -73,8 +74,18 @@ export function useWorktrees(cwd: string, enabled = true): Snapshot {
         void refresh(entry);
         const interval = window.setInterval(update, 60_000);
         const unsubscribe = subscribeGitChanged(update);
+        let disposed = false;
+        let stopRetirement: (() => void) | undefined;
+        void listen("worktree-retirement-changed", update)
+          .then((stop) => {
+            if (disposed) stop();
+            else stopRetirement = stop;
+          })
+          .catch(() => undefined);
         window.addEventListener("focus", update);
         entry.stop = () => {
+          disposed = true;
+          stopRetirement?.();
           window.clearInterval(interval);
           unsubscribe();
           window.removeEventListener("focus", update);

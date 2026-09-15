@@ -29,6 +29,7 @@ import {
   type Block,
   type HarnessId,
   type LinkedWorkItem,
+  type ModelTarget,
   type PlanBuildTarget,
   type RuntimeMode,
   type Session,
@@ -61,6 +62,7 @@ type Shared = {
   onCwdChange: (sessionId: string, cwd: string) => void;
   onBranchChange: (sessionId: string) => void;
   onWorkspaceChange?: (sessionId: string, choice: WorkspaceChoice) => void;
+  onPrepareWorkspace?: (sessionId: string) => Promise<string>;
   onModelChange: (sessionId: string, harness: HarnessId, model: string) => void;
   onModelSettingsChange: (
     sessionId: string,
@@ -72,7 +74,7 @@ type Shared = {
     text: string,
     attachments: Attachment[],
     options?: ComposerTurnOptions,
-  ) => void;
+  ) => boolean | void;
   onStop: (sessionId: string) => void;
   onCompactContext: (sessionId: string) => boolean;
   onPlaceSessionInFolder: (
@@ -121,16 +123,10 @@ type Shared = {
   ) => void;
   onSecondOpinion?: (
     sessionId: string,
-    harness: HarnessId,
+    target: ModelTarget,
     turn: Block[],
-    model: string,
   ) => void;
-  onHandoff?: (
-    sessionId: string,
-    harness: HarnessId,
-    turn: Block[],
-    model: string,
-  ) => void;
+  onHandoff?: (sessionId: string, target: ModelTarget, turn: Block[]) => void;
   onMovePane: (fromId: string, toId: string, edge: PaneEdge) => void;
   onNewTerminal: (sessionId: string) => void;
   onTerminalMetaChange?: (fileId: string, patch: TerminalMetaPatch) => void;
@@ -170,6 +166,7 @@ function PaneTreeComponent({
   onCwdChange,
   onBranchChange,
   onWorkspaceChange,
+  onPrepareWorkspace,
   onModelChange,
   onModelSettingsChange,
   onRuntimeModeChange,
@@ -389,6 +386,7 @@ function PaneTreeComponent({
                 onClose={onClose}
                 onCwdChange={onCwdChange}
                 onWorkspaceChange={onWorkspaceChange}
+                onPrepareWorkspace={onPrepareWorkspace}
                 onBranchChange={onBranchChange}
                 onModelChange={onModelChange}
                 onModelSettingsChange={onModelSettingsChange}

@@ -7,11 +7,22 @@ import type {
   WorktreeRetirementReport,
   WorktreeRetirementSelection,
   WorktreeSettings,
+  WorktreeRetirementPolicy,
+  AutomaticRetirement,
 } from "../lib/worktrees";
+import {
+  DISK_GIB,
+  type DiskSettings,
+  type DiskSnapshot,
+} from "../lib/worktreeDisk";
 import {
   RECOVERY_STORAGE_MIB,
   type RecoveryStorageUsage,
 } from "../lib/worktreeStorage";
+import type {
+  OutputReview,
+  OutputCleanupReport,
+} from "../lib/worktreeOutputCleanup";
 import "../index.css";
 
 // A separate Vite entry: never imported by the desktop app or its release bundle.
@@ -35,9 +46,76 @@ const scenario: Scenario =
   requestedScenario === "Restoration"
     ? requestedScenario
     : "Populated";
+const outputPlans = new Map<string, OutputReview>();
+const outputReports = new Map<string, OutputCleanupReport[]>();
+let outputRemovedBytes = 0;
 const day = 86_400_000;
 const entries = new Map<string, WorktreeEntry[]>();
 const projectSettings = new Map<string, WorktreeSettings>();
+const retirementPolicies = new Map<string, WorktreeRetirementPolicy>();
+const automaticJobs = new Map<string, AutomaticRetirement[]>();
+const currentPolicy = (cwd: string): WorktreeRetirementPolicy =>
+  retirementPolicies.get(cwd) ?? {
+    schemaVersion: 1,
+    version: 0,
+    mode: "manual",
+  };
+// Explicit preview scenario: represents a preference the fixture user saved.
+if (previewParams.get("automatic") === "1") {
+  retirementPolicies.set(paths[0], {
+    schemaVersion: 1,
+    version: 1,
+    mode: "automatic",
+  });
+  automaticJobs.set(paths[0], [
+    {
+      id: "preview-pinned",
+      path: `${paths[0]}/.worktrees/pinned`,
+      planId: null,
+      status: "blocked",
+      reason: "Conversation is pinned",
+      updatedAt: Date.now(),
+    },
+    {
+      id: "preview-partial",
+      path: `${paths[0]}/.worktrees/partial`,
+      planId: "retirement-pending",
+      status: "failed",
+      reason:
+        "Checkout removed; final recovery journal write will retry. Branches are kept.",
+      updatedAt: Date.now(),
+    },
+  ]);
+}
+let diskPolicy: DiskSettings = {
+  schemaVersion: 1,
+  version: 0,
+  checkoutBudgetBytes: 30 * DISK_GIB,
+  minimumFreeBytes: 10 * DISK_GIB,
+  initialAllowanceBytes: 5 * DISK_GIB,
+};
+function diskSnapshot(): DiskSnapshot {
+  return {
+    schemaVersion: 1,
+    settings: diskPolicy,
+    measuredAt: Date.now(),
+    complete: true,
+    usedBytes: 12 * DISK_GIB - outputRemovedBytes,
+    reclaimableBytes: 4 * DISK_GIB,
+    pendingBytes: 0,
+    checkouts: [],
+    reservations: [],
+    volumes: [
+      {
+        id: "preview-volume",
+        path: "/Users/demo",
+        availableBytes: 42 * DISK_GIB + outputRemovedBytes,
+        measuredAt: Date.now(),
+      },
+    ],
+    limitations: ["Preview measurements use sample data."],
+  };
+}
 function currentSettings(cwd: string): WorktreeSettings {
   return (
     projectSettings.get(cwd) ?? {
@@ -49,6 +127,9 @@ const retirementPlans = new Map<string, WorktreeRetirementPlan>();
 let archiveDemo: ArchiveDemo = "final";
 let partialAttempt = 0;
 let restorationComplete = false;
+let previewSetupFailure = false;
+let previewArchived = true;
+const workspaceCalls: string[] = [];
 let recoveryStorageVersion = 2;
 let recoveryStorageLimit = 64 * RECOVERY_STORAGE_MIB;
 let recoveryStorageUsed = 51.2 * RECOVERY_STORAGE_MIB;
@@ -282,17 +363,195 @@ mockIPC(
   async (command, args) => {
     const payload = args as {
       cwd?: string;
+      request?: { path?: string; cwd: string };
+      archived?: boolean;
       id?: string;
       ids?: string[];
+      paths?: string[];
       pinned?: boolean;
       sessionIds?: string[];
       planId?: string;
       selections?: WorktreeRetirementSelection[];
       settings?: WorktreeSettings;
+      policy?: WorktreeRetirementPolicy;
       limitBytes?: number;
       expectedVersion?: number;
     };
     const cwd = payload?.cwd ?? paths[0];
+    if (command === "worktree_output_history")
+      return outputReports.get(cwd) ?? [];
+    if (command === "worktree_output_review") {
+      const entry = currentEntries(cwd).find(
+        (entry) => entry.id === payload.id,
+      );
+      if (!entry) throw new Error("Checkout is unavailable");
+      const plan: OutputReview = {
+        planId: crypto.randomUUID(),
+        id: entry.id!,
+        path: entry.path,
+        branch: entry.branch ?? "",
+        blockedReason: entry.pinned
+          ? "Pinned"
+          : entry.retirementPending
+            ? "Checkout retirement is pending"
+            : null,
+        candidates: [
+          {
+            path: "node_modules",
+            estimatedBytes: 2 * DISK_GIB,
+            preservedPaths: [],
+            blockedReason: null,
+          },
+          {
+            path: "dist",
+            estimatedBytes: DISK_GIB / 2,
+            preservedPaths: ["dist/.env"],
+            blockedReason: null,
+          },
+          {
+            path: "packages/demo/dist",
+            estimatedBytes: 0,
+            preservedPaths: [],
+            blockedReason:
+              "Candidate contains tracked files: packages/demo/dist/source.js",
+          },
+        ],
+      };
+      outputPlans.set(plan.planId, plan);
+      return plan;
+    }
+    if (command === "worktree_output_execute") {
+      const plan = outputPlans.get(payload.planId!);
+      if (!plan) throw new Error("Review again before cleanup");
+      outputPlans.delete(plan.planId);
+      const partial = previewParams.get("outputs") === "partial";
+      const interrupted = previewParams.get("outputs") === "interrupted";
+      const results = (payload.paths ?? []).map((path) => ({
+        path,
+        estimatedRemovedBytes:
+          partial && path === "dist"
+            ? 0
+            : plan.candidates.find((c) => c.path === path)!.estimatedBytes,
+        error:
+          partial && path === "dist"
+            ? "Output directory changed; review again"
+            : null,
+      }));
+      const bytes = results.reduce(
+        (sum, r) => sum + r.estimatedRemovedBytes,
+        0,
+      );
+      outputRemovedBytes += bytes;
+      const report: OutputCleanupReport = {
+        planId: plan.planId,
+        id: plan.id,
+        path: plan.path,
+        status: interrupted ? "interrupted" : partial ? "partial" : "complete",
+        selectedPaths: payload.paths ?? [],
+        results: interrupted ? [] : results,
+        estimatedRemovedBytes: interrupted ? 0 : bytes,
+        observedFreeSpaceChange: interrupted ? null : bytes - DISK_GIB / 4,
+        measurementError: null,
+        preparationNeeded: true,
+      };
+      const projectCwd =
+        [...entries].find(([, rows]) =>
+          rows.some((entry) => entry.id === plan.id),
+        )?.[0] ?? cwd;
+      outputReports.set(projectCwd, [
+        report,
+        ...(outputReports.get(projectCwd) ?? []),
+      ]);
+      void emit("worktree-output-changed");
+      void emit("worktree-disk-changed");
+      return report;
+    }
+    if (command === "worktree_disk_get") return diskSnapshot();
+    if (command === "worktree_disk_settings_set") {
+      const requested = (args as { settings: DiskSettings }).settings;
+      if (requested.version !== diskPolicy.version)
+        throw new Error("WORKTREE_DISK_CONFLICT: Reload disk settings");
+      diskPolicy = { ...requested, version: requested.version + 1 };
+      return diskPolicy;
+    }
+    if (command === "worktree_retirement_policy_set") {
+      if (payload.policy?.version !== currentPolicy(cwd).version)
+        throw new Error(
+          "WORKTREE_RETIREMENT_CONFLICT: Retirement preference changed in another window.",
+        );
+      const saved = {
+        ...payload.policy!,
+        version: payload.policy!.version + 1,
+      };
+      retirementPolicies.set(cwd, saved);
+      if (saved.mode === "manual")
+        automaticJobs.set(
+          cwd,
+          (automaticJobs.get(cwd) ?? []).map((item) =>
+            item.status === "complete"
+              ? item
+              : {
+                  ...item,
+                  status: "paused",
+                  reason:
+                    item.reason ??
+                    "Manual review is selected. Automatic retirement is paused.",
+                },
+          ),
+        );
+      void emit("worktree-retirement-changed");
+      return saved;
+    }
+    if (command === "worktree_retirement_maintain") {
+      for (const [project, jobs] of automaticJobs) {
+        if (currentPolicy(project).mode !== "automatic") continue;
+        automaticJobs.set(
+          project,
+          jobs.map((item) =>
+            item.status === "blocked"
+              ? item
+              : {
+                  ...item,
+                  status: "complete",
+                  reason: null,
+                  updatedAt: Date.now(),
+                },
+          ),
+        );
+      }
+      void emit("worktree-retirement-changed");
+      return;
+    }
+    if (command === "worktree_archive_retirement") {
+      const plan = archivePlan();
+      if (currentPolicy(cwd).mode === "manual")
+        return { review: plan, automatic: [] };
+      const automatic: AutomaticRetirement[] = [
+        ...plan.kept.map((item): AutomaticRetirement => ({
+          ...item,
+          planId: null,
+          status: "blocked",
+          updatedAt: Date.now(),
+        })),
+        ...plan.entries.map((item): AutomaticRetirement => ({
+          id: item.id,
+          path: item.path,
+          planId: plan.planId,
+          status: archiveDemo === "partial" ? "failed" : "complete",
+          reason:
+            archiveDemo === "partial"
+              ? "Checkout removed; final recovery journal write will retry. Branches are kept."
+              : null,
+          updatedAt: Date.now(),
+        })),
+      ];
+      automaticJobs.set(cwd, automatic);
+      void emit("worktree-retirement-changed");
+      return {
+        review: { planId: plan.planId, entries: [], kept: [] },
+        automatic,
+      };
+    }
     if (command === "git_branches") {
       return {
         current: "main",
@@ -315,6 +574,8 @@ mockIPC(
         return {
           repo: cwd,
           settings: currentSettings(cwd),
+          retirementPolicy: currentPolicy(cwd),
+          automaticRetirement: automaticJobs.get(cwd) ?? [],
           entries: [
             main,
             {
@@ -333,6 +594,8 @@ mockIPC(
       return {
         repo: cwd,
         settings: currentSettings(cwd),
+        retirementPolicy: currentPolicy(cwd),
+        automaticRetirement: automaticJobs.get(cwd) ?? [],
         entries:
           scenario === "Empty"
             ? currentEntries(cwd).filter((entry) => entry.main)
@@ -385,7 +648,24 @@ mockIPC(
       void emit("worktree-storage-changed");
       return recoveryStorage();
     }
-    if (command === "worktree_setup") return;
+    if (command === "worktree_prepare") {
+      workspaceCalls.push(command);
+      return payload.request?.path ?? payload.request?.cwd;
+    }
+    if (command === "worktree_setup") {
+      workspaceCalls.push(command);
+      if (previewSetupFailure)
+        throw new Error(
+          "Fixture setup failed; clear the failure toggle and retry",
+        );
+      restorationComplete = true;
+      return;
+    }
+    if (command === "session_set_archived") {
+      workspaceCalls.push(command);
+      previewArchived = !!payload.archived;
+      return;
+    }
     if (command === "worktree_name_status") return "waiting";
     if (command === "worktree_name") return "named";
     if (command === "worktree_heartbeat") return;
@@ -404,11 +684,13 @@ mockIPC(
 );
 
 const { createRoot } = await import("react-dom/client");
-const { useEffect, useState } = await import("react");
+const { useEffect, useMemo, useRef, useState } = await import("react");
 const { SettingsView } = await import("../surfaces/SettingsView");
 const { SettingsNav } = await import("../chrome/SettingsRail");
 const { WorkspacePicker } = await import("../chrome/WorkspacePicker");
 const { newSession } = await import("../lib/session");
+const { createSessionWorkspacePreparation } =
+  await import("../lib/sessionWorkspace");
 const { WorktreeRetirementDialog } =
   await import("../chrome/WorktreeRetirementDialog");
 const { AppToaster } = await import("../chrome/AppToaster");
@@ -433,8 +715,38 @@ function Preview() {
   const [section, setSection] =
     useState<import("../lib/settings").SettingsSectionId>("worktrees");
   const [light, setLight] = useState(isLightScheme);
-  const [composerSession, setComposerSession] = useState(() =>
-    newSession("claude", paths[0]),
+  const [composerSession, setComposerSession] = useState(() => ({
+    ...newSession("claude", paths[0]),
+    ...(previewParams.get("history") === "1"
+      ? {
+          transcriptOnly: true,
+          worktreeCwd: `${paths[0]}/.worktrees/restorable`,
+          branch: "monocode/restorable-work",
+          blocks: [
+            {
+              id: "saved-message",
+              role: "user" as const,
+              text: "Saved history remains readable while its worktree is retired.",
+            },
+          ],
+        }
+      : {}),
+  }));
+  const composerRef = useRef(composerSession);
+  composerRef.current = composerSession;
+  const prepareWorkspace = useMemo(
+    () =>
+      createSessionWorkspacePreparation({
+        current: (id) =>
+          composerRef.current.id === id ? composerRef.current : undefined,
+        update: (session, patch) => {
+          const prepared = { ...composerRef.current, ...session, ...patch };
+          composerRef.current = prepared;
+          setComposerSession(prepared);
+          return prepared;
+        },
+      }),
+    [],
   );
   const [notice, setNotice] = useState("");
   const [reviewPlan, setReviewPlan] = useState<WorktreeRetirementPlan | null>(
@@ -500,6 +812,21 @@ function Preview() {
       },
       onReviewError: (cause) =>
         setNotice(`Archived. Review failed: ${String(cause)}`),
+      onAutomatic: (items) => {
+        if (!items.length) return;
+        const problems = items.filter((item) => item.reason);
+        setNotice(
+          problems.length
+            ? `Archived. ${problems.map((item) => item.reason).join(" ")}`
+            : `Archived. ${items.length} checkout(s) retired; recovery and branches kept.`,
+        );
+        if (problems.length)
+          toast("Archived · automatic cleanup needs attention", {
+            description: problems.map((item) => item.reason).join("\n"),
+            duration: Infinity,
+            closeButton: true,
+          });
+      },
     });
   };
 
@@ -524,20 +851,14 @@ function Preview() {
           onArchiveSession={() => {}}
           onDeleteSession={() => {}}
           onOpenWhatsNew={() => {}}
-          onOpenWorktree={async (cwd, worktreeCwd) => {
-            const entry = currentEntries(cwd).find(
-              (candidate) => candidate.path === worktreeCwd,
+          onOpenWorktree={async (_cwd, worktreeCwd) => {
+            const session = { ...composerRef.current, worktreeCwd };
+            composerRef.current = session;
+            const prepared = await prepareWorkspace(session);
+            setNotice(
+              `Prepared ${prepared.cwd}; ${workspaceCalls.join(" → ")}`,
             );
-            if (!entry) return;
-            if (entry.missing) {
-              restorationComplete = true;
-              setNotice(
-                `Preview: restored ${entry.branch} from its saved branch.`,
-              );
-              await refreshWorktrees(cwd);
-            } else {
-              setNotice(`Preview: open ${entry.branch}`);
-            }
+            await refreshWorktrees(session.cwd);
           }}
         />
       </div>
@@ -553,6 +874,59 @@ function Preview() {
             }
           />
         </div>
+        {previewParams.get("history") === "1" ? (
+          <div className="space-y-2 border-b border-content/8 py-2">
+            <p>{composerSession.blocks[0]?.text}</p>
+            <p>
+              {previewArchived ? "Archived" : "Active"} ·{" "}
+              {composerSession.transcriptOnly
+                ? "Transcript only"
+                : "Workspace in use"}
+            </p>
+            <label>
+              <input
+                type="checkbox"
+                onChange={(event) => {
+                  previewSetupFailure = event.target.checked;
+                }}
+              />{" "}
+              Simulate setup failure
+            </label>
+            <button
+              className="mx-3 text-accent"
+              onClick={() => {
+                const before = workspaceCalls.length;
+                setComposerSession((session) => ({
+                  ...session,
+                  transcriptOnly: true,
+                }));
+                setNotice(
+                  `Read history: ${workspaceCalls.length - before} workspace calls; archive state unchanged`,
+                );
+              }}
+            >
+              Read history
+            </button>
+            <button
+              className="text-accent"
+              onClick={() => {
+                void prepareWorkspace(composerRef.current)
+                  .then((prepared) =>
+                    setNotice(
+                      `Prepared ${prepared.cwd}; ${workspaceCalls.join(" → ")}`,
+                    ),
+                  )
+                  .catch((error) =>
+                    setNotice(
+                      `${String(error)}; history remains readable and archived`,
+                    ),
+                  );
+              }}
+            >
+              Restore workspace
+            </button>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2 border-b border-content/8 pb-2">
           <span className="mr-1 font-medium text-content/65">Archive demo</span>
           {(

@@ -45,6 +45,7 @@ export type WorkspaceSessionStub = {
   branch?: string;
   worktreeCwd?: string;
   workspaceChoice?: Session["workspaceChoice"];
+  transcriptOnly?: boolean;
 };
 
 export type WorkspaceSnapshot = {
@@ -239,7 +240,7 @@ export function hydrateWorkspaceSnapshot(
     if (existing) return existing;
     const record = loaded.get(id);
     const stub = stubs.get(id);
-    const base = record ? { ...record, workspaceChoice: stub?.workspaceChoice } : (stub ? sessionFromStub(stub) : null);
+    const base = record ? { ...record, workspaceChoice: stub?.workspaceChoice, transcriptOnly: record.transcriptOnly || stub?.transcriptOnly } : (stub ? sessionFromStub(stub) : null);
     if (!base || base.inboxAsk) return null;
     const next = interruptedIds.has(id) ? markTurnInterrupted(base) : { ...base, busy: false };
     sessions.set(id, next);
@@ -303,6 +304,7 @@ function sessionStub(session: Session): WorkspaceSessionStub | null {
   if (!session.id) return null;
   return {
     id: session.id,
+    ...(session.transcriptOnly ? { transcriptOnly: true } : {}),
     cwd: session.cwd || "~",
     harness: session.harness,
     model: session.model,
@@ -330,6 +332,7 @@ function sessionFromStub(stub: WorkspaceSessionStub): Session {
   return {
     ...session,
     id: stub.id,
+    ...(stub.transcriptOnly ? { transcriptOnly: true } : {}),
     title: stub.title,
     ...(stub.inboxAsk ? { inboxAsk: stub.inboxAsk } : {}),
     ...(stub.providerSessionId
@@ -365,6 +368,7 @@ function sanitizeStub(raw: unknown): WorkspaceSessionStub | null {
     : undefined;
   return {
     id: value.id,
+    ...(value.transcriptOnly === true ? { transcriptOnly: true } : {}),
     ...(workspaceChoice ? { workspaceChoice } : {}),
     cwd:
       typeof value.cwd === "string" && value.cwd.trim() ? value.cwd.trim() : "~",

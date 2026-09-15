@@ -1,5 +1,6 @@
 //! Exercise the environment through the same create/review/retire/open seams
 //! used by the native commands, with real Git and an on-disk database.
+use super::tests::{create, prepare};
 use super::*;
 
 struct EnvironmentFixture {
@@ -56,6 +57,7 @@ impl EnvironmentFixture {
             root: dir.join("worktrees"),
             windows: Mutex::new(HashMap::new()),
             repositories: RepositoryReservations::default(),
+            disk: disk::DiskManager::default(),
         };
         let fixture = Self {
             dir,
@@ -110,14 +112,21 @@ impl EnvironmentFixture {
     }
 
     fn setup_at(&self, requested_path: &str) -> Result<(), String> {
-        match environment::begin_setup(&self.conn, requested_path)? {
+        let result = match environment::begin_setup(&self.conn, requested_path)? {
             environment::BeginSetup::Skip => Ok(()),
             environment::BeginSetup::Run(operation) => {
                 let result = environment::run_setup(&operation, |_| {});
                 environment::finish_setup(&self.conn, &operation, &result)?;
                 result
             }
+        };
+        if let Some(entry) = owned(&self.conn)?
+            .into_iter()
+            .find(|entry| path_inside(Path::new(requested_path), Path::new(&entry.path)))
+        {
+            disk::release_handoff(&self.host.disk, &self.conn, &entry.path)?;
         }
+        result
     }
 
     fn plan(&self, entry: &Owned) -> WorktreeRetirementPlan {
@@ -149,6 +158,233 @@ impl EnvironmentFixture {
 impl Drop for EnvironmentFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn access_request(cwd: &str) -> PrepareWorktree {
+    PrepareWorktree {
+        cwd: cwd.into(),
+        session_id: "filesystem-access".into(),
+        path: Some(cwd.into()),
+        name: "Filesystem access".into(),
+        create_new: false,
+        use_worktree: Some(false),
+        base_ref: None,
+        auto_name_token: None,
+    }
+}
+
+#[test]
+fn standalone_access_accepts_plain_directories_but_never_a_file_as_checkout() {
+    let fixture = EnvironmentFixture::new();
+    let folder = fixture.dir.join("ordinary folder");
+    std::fs::create_dir(&folder).unwrap();
+    let file = folder.join("notes.txt");
+    std::fs::write(&file, "ordinary file").unwrap();
+    for cwd in [&folder, &fixture.repo] {
+        let request = access_request(&path_to_js(cwd));
+        preparation_common(&fixture.conn, &request).unwrap();
+        let prepared = prepare(&fixture.conn, &fixture.host, request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared, path_to_js(&std::fs::canonicalize(cwd).unwrap()));
+    }
+    let request = access_request(&path_to_js(&file));
+    assert!(preparation_common(&fixture.conn, &request).is_err());
+    assert!(prepare(&fixture.conn, &fixture.host, request).is_err());
+    assert!(owned(&fixture.conn).unwrap().is_empty());
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "ordinary file");
+}
+
+#[test]
+fn archived_access_resolves_missing_checkout_and_retries_setup_without_activating_history() {
+    let fixture = EnvironmentFixture::new();
+    let entry = fixture.create_at(&fixture.repo.join("apps/web"));
+    fixture.setup(&entry).unwrap();
+    fixture.conn.execute(
+        "INSERT INTO sessions (id, cwd, worktree_cwd, branch, archived) VALUES ('saved', ?1, ?2, ?3, 1)",
+        params![path_to_js(&fixture.repo.join("apps/web")), format!("{}/apps/web", entry.path), entry.branch],
+    ).unwrap();
+    let plan = fixture.plan(&entry);
+    assert_eq!(fixture.retire(&plan, &entry).results[0].error, None);
+    assert!(!Path::new(&entry.path).exists());
+    // Looking up saved history has no lifecycle side effects, even after restart.
+    let reopened = Connection::open(fixture.dir.join("state.sqlite")).unwrap();
+    let saved: (String, bool) = reopened
+        .query_row(
+            "SELECT worktree_cwd, archived FROM sessions WHERE id = 'saved'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert!(saved.1);
+    assert!(!Path::new(&entry.path).exists());
+    // Recovery must preserve the saved commit when its old branch name is reused.
+    git(&fixture.repo, &["branch", "-D", &entry.branch]).unwrap();
+    std::fs::write(fixture.repo.join("later.txt"), "later main work").unwrap();
+    git(&fixture.repo, &["add", "later.txt"]).unwrap();
+    git(&fixture.repo, &["commit", "-m", "Reuse branch name"]).unwrap();
+    let reused_tip = resolve_commit(&fixture.repo, "HEAD").unwrap();
+    git(&fixture.repo, &["branch", &entry.branch]).unwrap();
+    fixture.configure_at(&fixture.repo.join("apps/web"), "exit 9", &[]);
+    let request = access_request(&saved.0);
+    assert_eq!(
+        preparation_common(&fixture.conn, &request).unwrap(),
+        entry.common
+    );
+    let prepared = prepare(&fixture.conn, &fixture.host, request)
+        .unwrap()
+        .unwrap();
+    assert!(prepared.ends_with("/apps/web"));
+    let recovered_branch: String = fixture
+        .conn
+        .query_row(
+            "SELECT branch FROM sessions WHERE id = 'saved'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_ne!(recovered_branch, entry.branch);
+    assert!(recovered_branch.starts_with("monocode/recovered-"));
+    assert_eq!(
+        resolve_commit(&fixture.repo, &entry.branch).unwrap(),
+        reused_tip
+    );
+
+    assert!(fixture.setup_at(&prepared).is_err());
+    assert!(fixture
+        .conn
+        .query_row(
+            "SELECT archived FROM sessions WHERE id = 'saved'",
+            [],
+            |row| row.get::<_, bool>(0)
+        )
+        .unwrap());
+    fixture.configure_at(
+        &fixture.repo.join("apps/web"),
+        "printf ready > setup-proof",
+        &[],
+    );
+    let retried = prepare(&fixture.conn, &fixture.host, access_request(&saved.0))
+        .unwrap()
+        .unwrap();
+    assert_eq!(prepared, retried);
+    fixture.setup_at(&retried).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&retried).join("setup-proof")).unwrap(),
+        "ready"
+    );
+    assert!(!fixture.repo.join("apps/web/setup-proof").exists());
+    // Only the successful conversation preparation caller may activate it.
+    assert!(fixture
+        .conn
+        .query_row(
+            "SELECT archived FROM sessions WHERE id = 'saved'",
+            [],
+            |row| row.get::<_, bool>(0)
+        )
+        .unwrap());
+}
+
+#[test]
+fn subsequent_workspace_access_observes_native_pending_setup() {
+    let fixture = EnvironmentFixture::new();
+    let entry = fixture.create();
+    fixture.setup(&entry).unwrap();
+    std::fs::remove_file(Path::new(&entry.path).join("dist/result.txt")).unwrap();
+    // Simulate a future generated-output cleanup invalidating native setup.
+    fixture
+        .conn
+        .execute(
+            "UPDATE worktree_environment_setup SET status = 'pending' WHERE worktree_id = ?1",
+            [&entry.id],
+        )
+        .unwrap();
+    let prepared = prepare(&fixture.conn, &fixture.host, access_request(&entry.path))
+        .unwrap()
+        .unwrap();
+    fixture.setup_at(&prepared).unwrap();
+    assert!(Path::new(&prepared).join("dist/result.txt").is_file());
+}
+
+#[test]
+fn shared_checkout_setup_waits_across_sessions_and_subdirectories_and_shares_failures() {
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
+
+    for fail in [false, true] {
+        let fixture = EnvironmentFixture::new();
+        fixture.configure(if fail {
+            "exit 9"
+        } else {
+            "printf once >> setup-count"
+        });
+        let entry = fixture.create();
+        let first = prepare(
+            &fixture.conn,
+            &fixture.host,
+            access_request(&format!("{}/apps/web", entry.path)),
+        )
+        .unwrap()
+        .unwrap();
+        let second = prepare(
+            &fixture.conn,
+            &fixture.host,
+            access_request(&format!("{}/apps/api", entry.path)),
+        )
+        .unwrap()
+        .unwrap();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let database = fixture.dir.join("state.sqlite");
+        let path = entry.path.clone();
+        let owner_runs = Arc::clone(&runs);
+        let owner = std::thread::spawn(move || {
+            setup::coordinate_setup(&path, || {
+                owner_runs.fetch_add(1, Ordering::SeqCst);
+                let conn = Connection::open(database).unwrap();
+                let environment::BeginSetup::Run(operation) =
+                    environment::begin_setup(&conn, &first)?
+                else {
+                    panic!("expected pending setup")
+                };
+                started_tx.send(()).unwrap();
+                finish_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                let result = environment::run_setup(&operation, |_| {});
+                environment::finish_setup(&conn, &operation, &result)?;
+                result
+            })
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let path = entry.path.clone();
+        let waiter_runs = Arc::clone(&runs);
+        let waiter = std::thread::spawn(move || {
+            setup::coordinate_setup(&path, || {
+                waiter_runs.fetch_add(1, Ordering::SeqCst);
+                panic!("second subdirectory {second} ran setup concurrently")
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !setup::setup_has_waiter(&entry.path) && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(setup::setup_has_waiter(&entry.path));
+        assert!(setup::active_paths().contains(&PathBuf::from(&entry.path)));
+        finish_tx.send(()).unwrap();
+        let result = owner.join().unwrap();
+        assert_eq!(result, waiter.join().unwrap());
+        assert_eq!(result.is_err(), fail);
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert!(!setup::active_paths().contains(&PathBuf::from(&entry.path)));
+        if fail {
+            fixture.configure("printf retried > setup-count");
+            setup::coordinate_setup(&entry.path, || fixture.setup(&entry)).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&entry.path).join("setup-count")).unwrap(),
+            if fail { "retried" } else { "once" }
+        );
     }
 }
 

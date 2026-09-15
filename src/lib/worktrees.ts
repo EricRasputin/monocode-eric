@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { invokeWorkspace } from "./worktreeDisk";
 import type { Session } from "./session";
-import type { WorkspaceTab } from "./layout";
+import { isPlanTab, isReleaseNotesTab, type WorkspaceTab } from "./layout";
 import type { ProjectTerminalDock } from "./projectTerminal";
 import { rebasePath } from "./paths";
 import { finishWorktreeNaming, type WorktreeNaming } from "./worktreeNaming";
@@ -38,7 +39,53 @@ export type WorktreeOverview = {
   projectCwd?: string;
   settings: WorktreeSettings;
   entries: WorktreeEntry[];
+  retirementPolicy?: WorktreeRetirementPolicy;
+  automaticRetirement?: AutomaticRetirement[];
 };
+
+export type WorktreeRetirementPolicy = {
+  schemaVersion: 1;
+  version: number;
+  mode: "manual" | "automatic";
+};
+
+export const DEFAULT_RETIREMENT_POLICY: WorktreeRetirementPolicy = {
+  schemaVersion: 1,
+  version: 0,
+  mode: "manual",
+};
+
+export type AutomaticRetirement = {
+  id: string;
+  path: string;
+  planId: string | null;
+  status: "pending" | "blocked" | "failed" | "paused" | "complete";
+  reason: string | null;
+  updatedAt: number;
+};
+
+export const saveRetirementPolicy = (
+  cwd: string,
+  policy: WorktreeRetirementPolicy,
+) =>
+  invoke<WorktreeRetirementPolicy>("worktree_retirement_policy_set", {
+    cwd,
+    policy,
+  });
+
+export function isRetirementPolicyConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith("WORKTREE_RETIREMENT_CONFLICT:");
+}
+
+export const retryAutomaticRetirement = () =>
+  invoke<void>("worktree_retirement_maintain");
+
+export const retireArchivedWorktrees = (sessionIds: readonly string[]) =>
+  invoke<{ review: WorktreeRetirementPlan; automatic: AutomaticRetirement[] }>(
+    "worktree_archive_retirement",
+    { sessionIds },
+  );
 
 /** Keep a nested project's relative location when it moves to another checkout. */
 export function worktreeProjectPath(
@@ -115,14 +162,14 @@ export const listWorktrees = (cwd: string) =>
 export const saveWorktreeSettings = (cwd: string, settings: WorktreeSettings) =>
   invoke<WorktreeSettings>("worktree_settings_set", { cwd, settings });
 export const setupWorktree = (path: string) =>
-  invoke<void>("worktree_setup", { path });
+  invokeWorkspace<void>("worktree_setup", { path });
 export const createWorktree = async (
   cwd: string,
   sessionId: string,
   name: string,
   baseRef: string,
 ) => {
-  const path = await invoke<string>("worktree_create", {
+  const path = await invokeWorkspace<string>("worktree_create", {
     cwd,
     sessionId,
     name,
@@ -133,14 +180,37 @@ export const createWorktree = async (
 };
 export const pinWorktree = (id: string, pinned: boolean) =>
   invoke<void>("worktree_pin", { id, pinned });
+// Preparation leases bridge native checkout creation, setup, and activation.
+// Heartbeats must include these even before React has committed a workspace surface.
+const preparationPaths = new Map<symbol, Set<string>>();
+export function leasePreparingWorkspace(path: string) {
+  const key = Symbol();
+  const paths = new Set([path]);
+  preparationPaths.set(key, paths);
+  return {
+    add: (preparedPath: string) => paths.add(preparedPath),
+    release: () => preparationPaths.delete(key),
+  };
+}
+
 // A delayed heartbeat must not reinstate paths released by a later archive.
-let heartbeatQueue: Promise<void> = Promise.resolve();
-export const heartbeatWorktrees = (paths: string[]): Promise<void> => {
-  const pending = heartbeatQueue.then(() =>
-    invoke<void>("worktree_heartbeat", { paths }),
-  );
+let heartbeatQueue: Promise<unknown> = Promise.resolve();
+function queueWorkspaceLease<T>(operation: () => Promise<T>): Promise<T> {
+  const pending = heartbeatQueue.then(operation);
   heartbeatQueue = pending.catch(() => undefined);
   return pending;
+}
+export const heartbeatWorktrees = (paths: string[]): Promise<void> => {
+  return queueWorkspaceLease(() =>
+    invoke<void>("worktree_heartbeat", {
+      paths: [
+        ...new Set([
+          ...paths,
+          ...[...preparationPaths.values()].flatMap((paths) => [...paths]),
+        ]),
+      ].filter((path) => path && path !== "~"),
+    }),
+  );
 };
 
 /** Existing conversations stay in their checkout. A failed first preparation
@@ -167,28 +237,36 @@ export async function prepareSessionWorktree(
   session: Session,
   name = session.title,
   naming?: WorktreeNaming,
+  onLocated?: (path: string) => void | Promise<void>,
 ): Promise<string | null> {
   if (session.inboxAsk || session.cwd === "~") return null;
-  const path = await invoke<string | null>("worktree_prepare", {
-    request: {
-      cwd: session.cwd,
-      sessionId: session.id,
-      path:
-        session.worktreeCwd ??
-        session.workspaceChoice?.path ??
-        (session.workspaceChoice?.mode === "local" ||
-        session.orchestrationLeadId
-          ? session.cwd
-          : null),
-      name,
-      createNew: shouldIsolateSession(session),
-      useWorktree: session.workspaceChoice
-        ? session.workspaceChoice.mode === "worktree"
-        : null,
-      baseRef: session.workspaceChoice?.baseRef ?? null,
-      ...(naming ? { autoNameToken: naming.token } : {}),
-    },
+  const path = await queueWorkspaceLease(async () => {
+    const located = await invokeWorkspace<string | null>("worktree_prepare", {
+      request: {
+        cwd: session.cwd,
+        sessionId: session.id,
+        path:
+          session.worktreeCwd ??
+          session.workspaceChoice?.path ??
+          (session.workspaceChoice?.mode === "local" ||
+          session.orchestrationLeadId
+            ? session.cwd
+            : null),
+        name,
+        createNew: shouldIsolateSession(session),
+        useWorktree: session.workspaceChoice
+          ? session.workspaceChoice.mode === "worktree"
+          : null,
+        baseRef: session.workspaceChoice?.baseRef ?? null,
+        ...(naming ? { autoNameToken: naming.token } : {}),
+      },
+    });
+    if (located) await onLocated?.(located);
+    return located;
   });
+  if (!path && (session.worktreeCwd || session.workspaceChoice?.path)) {
+    throw new Error("Workspace preparation did not return the saved checkout");
+  }
   if (path) {
     const setup = setupWorktree(path);
     if (naming) {
@@ -208,13 +286,19 @@ export function protectedWorktreePaths(
   return [
     ...new Set(
       [
-        ...sessions.map(
-          (session) =>
-            session.worktreeCwd || session.workspaceChoice?.path || session.cwd,
-        ),
+        ...sessions
+          .filter((session) => !session.transcriptOnly)
+          .map(
+            (session) =>
+              session.worktreeCwd ||
+              session.workspaceChoice?.path ||
+              session.cwd,
+          ),
         ...tabs.flatMap((tab) =>
           [...tab.editorPanes, ...tab.terminalPanes].flatMap((pane) =>
-            pane.files.flatMap((file) => [file.cwd, file.path]),
+            pane.files
+              .filter((file) => !isPlanTab(file) && !isReleaseNotesTab(file))
+              .flatMap((file) => [file.cwd, file.path]),
           ),
         ),
         ...docks.flatMap((dock) =>

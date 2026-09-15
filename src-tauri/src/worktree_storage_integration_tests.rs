@@ -4,6 +4,7 @@
 //! setup seams as the native commands. Storage-only assertions go through the
 //! storage API, except for physical blob counts and deliberate orphan creation.
 
+use super::tests::create;
 use super::*;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -82,6 +83,7 @@ impl StorageFixture {
                 root: dir.join("owned checkouts"),
                 windows: Mutex::new(HashMap::new()),
                 repositories: RepositoryReservations::default(),
+                disk: disk::DiskManager::default(),
             },
             dir,
             repo,
@@ -133,6 +135,7 @@ impl StorageFixture {
                 result.unwrap();
             }
         }
+        disk::release_handoff(&self.host.disk, self.conn(), &entry.path).unwrap();
     }
 
     fn restore(&self, id: &str) -> Owned {

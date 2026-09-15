@@ -298,6 +298,8 @@ pub fn run() {
             linear::linear_issue_thread,
             linear::linear_issue_comment,
             worktrees::worktree_list,
+            worktrees::disk::worktree_disk_get,
+            worktrees::disk::worktree_disk_settings_set,
             worktrees::worktree_settings_set,
             worktrees::worktree_storage_get,
             worktrees::worktree_storage_limit_set,
@@ -310,6 +312,12 @@ pub fn run() {
             worktrees::worktree_pin,
             worktrees::worktree_retirement_plan,
             worktrees::worktree_retire,
+            worktrees::automatic::worktree_retirement_policy_set,
+            worktrees::automatic::worktree_archive_retirement,
+            worktrees::automatic::worktree_retirement_maintain,
+            worktrees::output_cleanup::worktree_output_review,
+            worktrees::output_cleanup::worktree_output_execute,
+            worktrees::output_cleanup::worktree_output_history,
             link_preview::fetch_link_preview,
             fs::git_branches,
             fs::git_checkout,
@@ -416,6 +424,7 @@ pub fn run() {
             let _ = window::show_hidden_or_open_new(handle);
         }
         tauri::RunEvent::Ready => {
+            worktrees::automatic::start(handle);
             #[cfg(target_os = "macos")]
             {
                 macos::request_badge_authorization();
@@ -432,6 +441,7 @@ pub fn run() {
         } => {
             let other_window = handle.webview_windows().keys().any(|name| name != &label);
             control::window_closed(handle, &label);
+            worktrees::automatic::schedule(handle);
             if !other_window {
                 reap_harness_children(handle);
             }

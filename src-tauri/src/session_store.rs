@@ -336,6 +336,7 @@ pub fn session_delete(
 
 #[tauri::command(async)]
 pub fn session_set_archived(
+    app: AppHandle,
     store: State<'_, SessionStore>,
     worktree_host: State<'_, crate::worktrees::WorktreeHost>,
     session_id: String,
@@ -355,11 +356,14 @@ pub fn session_set_archived(
     if managed_repository_for_session(&conn, &session_id)? != expected_repository {
         return Err("Conversation worktree changed while archiving it; retry".into());
     }
-    set_archived(&conn, &session_id, archived).map_err(|e| e.to_string())
+    set_archived(&conn, &session_id, archived).map_err(|e| e.to_string())?;
+    crate::worktrees::automatic::schedule(&app);
+    Ok(())
 }
 
 #[tauri::command(async)]
 pub fn session_set_pinned(
+    app: AppHandle,
     store: State<'_, SessionStore>,
     worktree_host: State<'_, crate::worktrees::WorktreeHost>,
     session_id: String,
@@ -379,7 +383,9 @@ pub fn session_set_pinned(
     if managed_repository_for_session(&conn, &session_id)? != expected_repository {
         return Err("Conversation worktree changed while pinning it; retry".into());
     }
-    set_pinned(&conn, &session_id, pinned).map_err(|e| e.to_string())
+    set_pinned(&conn, &session_id, pinned).map_err(|e| e.to_string())?;
+    crate::worktrees::automatic::schedule(&app);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

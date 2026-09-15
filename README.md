@@ -47,7 +47,7 @@ Windows (x86_64): download the NSIS installer from [GitHub Releases](https://git
 
 ## Worktrees in this fork
 
-Choose **New worktree** or **Current checkout** above the message box. For a new worktree, choose the starting branch and send; Monocode creates the checkout for that conversation. **Settings → Worktrees** suggests old checkouts and asks before removal, preserving branches and saved conversations. See [the worktree guide](docs/worktrees.md).
+Choose **New worktree** or **Current checkout** above the message box. For a new worktree, choose the starting branch and send; Monocode creates the checkout for that conversation. **Settings → Worktrees** defaults to manual cleanup review. You can explicitly save automatic retirement after the last conversation is archived; eligible checkouts are removed with code recovery, selected configuration, branches and conversation history preserved. **Clear generated files** separately offers manual review of disposable outputs while keeping an unfinished checkout and selected configuration; setup runs before later workspace use. See [the worktree guide](docs/worktrees.md).
 
 ## Some notes
 

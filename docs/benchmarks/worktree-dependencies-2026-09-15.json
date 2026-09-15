@@ -1,0 +1,1592 @@
+{
+  "root": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+  "measurements": [
+    {
+      "label": "version-node",
+      "command": [
+        "node",
+        "--version"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.024227,
+      "exit": 0
+    },
+    {
+      "label": "version-npm",
+      "command": [
+        "npm",
+        "--version"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.115543,
+      "exit": 0
+    },
+    {
+      "label": "version-corepack",
+      "command": [
+        "corepack",
+        "--version"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.052007,
+      "exit": 0
+    },
+    {
+      "label": "version-pnpm",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "--version"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.948882,
+      "exit": 0
+    },
+    {
+      "label": "version-rustc",
+      "command": [
+        "rustc",
+        "-Vv"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.104707,
+      "exit": 0
+    },
+    {
+      "label": "version-cargo",
+      "command": [
+        "cargo",
+        "-V"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.03122,
+      "exit": 0
+    },
+    {
+      "label": "version-git",
+      "command": [
+        "git",
+        "--version"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.011808,
+      "exit": 0
+    },
+    {
+      "label": "version-macos",
+      "command": [
+        "sw_vers"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.010898,
+      "exit": 0
+    },
+    {
+      "label": "node-lock-npm",
+      "command": [
+        "npm",
+        "install",
+        "--package-lock-only",
+        "--ignore-scripts"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-seed",
+      "seconds": 1.28111,
+      "exit": 0
+    },
+    {
+      "label": "node-lock-pnpm",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--lockfile-only",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/seed-pnpm-store"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-seed",
+      "seconds": 0.830623,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-a-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.021316,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-a-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.148446,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-a-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.033522,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-b-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.019601,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-b-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.155668,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-b-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.033321,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-cold-prepare",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.510082,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-cold-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.961056,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-warm-prepare",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.399073,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-warm-fresh-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.884998,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-warm-existing-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.52951,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-a-execute",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.033519,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-b-execute",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.03331,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-b-parallel-prepare",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.555449,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-a-parallel-prepare",
+      "command": [
+        "npm",
+        "ci",
+        "--ignore-scripts",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.557289,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-a-parallel-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.926916,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-b-parallel-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.926659,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-survivor",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-b",
+      "seconds": 0.034381,
+      "exit": 0
+    },
+    {
+      "label": "node-npm-prune",
+      "command": [
+        "npm",
+        "cache",
+        "clean",
+        "--force"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-npm-a",
+      "seconds": 0.196059,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-a-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.019584,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-a-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.150992,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-a-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.034079,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-b-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.020452,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-b-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.155213,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-b-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.034208,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-cold-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-cache",
+        "--package-import-method",
+        "clone"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.962399,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-cold-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 1.398013,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-warm-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-cache",
+        "--package-import-method",
+        "clone",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.45728,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-warm-fresh-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 1.416691,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-warm-existing-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.606534,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-a-execute",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.035349,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-b-execute",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.033659,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-b-parallel-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-cache",
+        "--package-import-method",
+        "clone",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.538247,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-a-parallel-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-cache",
+        "--package-import-method",
+        "clone",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.541449,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-a-parallel-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.967428,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-b-parallel-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.967524,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-survivor",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-b",
+      "seconds": 0.034649,
+      "exit": 0
+    },
+    {
+      "label": "node-clone-prune",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "store",
+        "prune",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-cache"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-clone-a",
+      "seconds": 0.242221,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-a-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.020216,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-a-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.161003,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-a-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.032774,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-b-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.020573,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-b-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.155701,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-b-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.033566,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-cold-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-cache",
+        "--package-import-method",
+        "hardlink"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 1.027013,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-cold-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 1.370784,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-warm-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-cache",
+        "--package-import-method",
+        "hardlink",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.71417,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-warm-fresh-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 1.210691,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-warm-existing-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.566954,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-a-execute",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.033372,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-b-execute",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.033696,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-a-parallel-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-cache",
+        "--package-import-method",
+        "hardlink",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.849628,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-b-parallel-prepare",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-cache",
+        "--package-import-method",
+        "hardlink",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.849707,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-a-parallel-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.868398,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-b-parallel-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.868653,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-survivor",
+      "command": [
+        "node",
+        "dist/main.cjs"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-b",
+      "seconds": 0.033654,
+      "exit": 0
+    },
+    {
+      "label": "node-hardlink-prune",
+      "command": [
+        "corepack",
+        "pnpm@10.32.1",
+        "store",
+        "prune",
+        "--store-dir",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-cache"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/node-hardlink-a",
+      "seconds": 0.246545,
+      "exit": 0
+    },
+    {
+      "label": "rust-lock",
+      "command": [
+        "cargo",
+        "generate-lockfile"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-seed",
+      "seconds": 0.422442,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.020178,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.016729,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.02447,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.018525,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.016164,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.02528,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-cold-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.656047,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-cold-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 6.852187,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-second-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.650779,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-second-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 6.897491,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-warm-existing-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.144909,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.090804,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.103584,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-parallel-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.103025,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-parallel-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.104344,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-parallel-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 7.488208,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-parallel-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 7.919864,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-execute",
+      "command": [
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a/target/debug/sharing-fixture"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.372983,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-execute",
+      "command": [
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b/target/debug/sharing-fixture"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.38424,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-a-final-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-a",
+      "seconds": 0.089025,
+      "exit": 0
+    },
+    {
+      "label": "rust-private-sources-b-final-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-private-sources-b",
+      "seconds": 0.090617,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.022194,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.017063,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.024292,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-git-init",
+      "command": [
+        "git",
+        "init",
+        "-b",
+        "main",
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4",
+      "seconds": 0.018664,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-git-add",
+      "command": [
+        "git",
+        "add",
+        "."
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.016285,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-git-commit",
+      "command": [
+        "git",
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Disposable dependency benchmark"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.02447,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-cold-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.651806,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-cold-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 6.789913,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-second-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.17246,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-second-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 6.060818,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-warm-existing-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.138438,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.08669,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.089145,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-parallel-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.097408,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-parallel-prepare",
+      "command": [
+        "cargo",
+        "fetch",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.100296,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-parallel-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 7.40986,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-parallel-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 7.461391,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-execute",
+      "command": [
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a/target/debug/sharing-fixture"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.371469,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-execute",
+      "command": [
+        "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b/target/debug/sharing-fixture"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.369163,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-a-final-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-a",
+      "seconds": 0.08873,
+      "exit": 0
+    },
+    {
+      "label": "rust-shared-sources-b-final-clean",
+      "command": [
+        "cargo",
+        "clean"
+      ],
+      "cwd": "/private/var/folders/m2/kvd1y03j1fxc_ym_gc6jkfbc0000gn/T/monocode-sharing-oh9emqc4/rust-shared-sources-b",
+      "seconds": 0.090629,
+      "exit": 0
+    }
+  ],
+  "snapshots": {
+    "node-npm-two-built": {
+      "components": {
+        "a": 40640512,
+        "b": 40640512,
+        "store": 8806400
+      },
+      "union_bytes": 90087424
+    },
+    "node-npm-parallel-built": {
+      "components": {
+        "a": 40640512,
+        "b": 40640512,
+        "store": 8818688
+      },
+      "union_bytes": 90099712
+    },
+    "node-npm-removed-a": {
+      "components": {
+        "a": 1249280,
+        "b": 40640512,
+        "store": 8818688
+      },
+      "union_bytes": 50708480
+    },
+    "node-npm-removed-both": {
+      "components": {
+        "a": 1249280,
+        "b": 1249280,
+        "store": 8818688
+      },
+      "union_bytes": 11317248
+    },
+    "node-npm-pruned": {
+      "components": {
+        "a": 1249280,
+        "b": 1249280,
+        "store": 36864
+      },
+      "union_bytes": 2535424
+    },
+    "node-clone-two-built": {
+      "components": {
+        "a": 40665088,
+        "b": 40665088,
+        "store": 38420480
+      },
+      "union_bytes": 119750656
+    },
+    "node-clone-parallel-built": {
+      "components": {
+        "a": 40665088,
+        "b": 40665088,
+        "store": 38420480
+      },
+      "union_bytes": 119750656
+    },
+    "node-clone-removed-a": {
+      "components": {
+        "a": 1245184,
+        "b": 40665088,
+        "store": 38420480
+      },
+      "union_bytes": 80330752
+    },
+    "node-clone-removed-both": {
+      "components": {
+        "a": 1245184,
+        "b": 1245184,
+        "store": 38420480
+      },
+      "union_bytes": 40910848
+    },
+    "node-clone-pruned": {
+      "components": {
+        "a": 1245184,
+        "b": 1245184,
+        "store": 0
+      },
+      "union_bytes": 2490368
+    },
+    "node-hardlink-two-built": {
+      "components": {
+        "a": 40591360,
+        "b": 40591360,
+        "store": 38420480
+      },
+      "union_bytes": 43515904
+    },
+    "node-hardlink-parallel-built": {
+      "components": {
+        "a": 40591360,
+        "b": 40591360,
+        "store": 38420480
+      },
+      "union_bytes": 43515904
+    },
+    "node-hardlink-removed-a": {
+      "components": {
+        "a": 1245184,
+        "b": 40591360,
+        "store": 38420480
+      },
+      "union_bytes": 42213376
+    },
+    "node-hardlink-removed-both": {
+      "components": {
+        "a": 1245184,
+        "b": 1245184,
+        "store": 38420480
+      },
+      "union_bytes": 40910848
+    },
+    "node-hardlink-pruned": {
+      "components": {
+        "a": 1245184,
+        "b": 1245184,
+        "store": 0
+      },
+      "union_bytes": 2490368
+    },
+    "rust-private-sources-two-built": {
+      "components": {
+        "a": 124653568,
+        "b": 124653568,
+        "cargo_homes": 57131008
+      },
+      "union_bytes": 306438144
+    },
+    "rust-private-sources-parallel-built": {
+      "components": {
+        "a": 124653568,
+        "b": 124653568,
+        "cargo_homes": 57131008
+      },
+      "union_bytes": 306438144
+    },
+    "rust-private-sources-a-cleaned": {
+      "components": {
+        "a": 151552,
+        "b": 124653568,
+        "cargo_homes": 57131008
+      },
+      "union_bytes": 181936128
+    },
+    "rust-private-sources-b-cleaned": {
+      "components": {
+        "a": 151552,
+        "b": 151552,
+        "cargo_homes": 57131008
+      },
+      "union_bytes": 57434112
+    },
+    "rust-private-sources-evicted": {
+      "components": {
+        "a": 151552,
+        "b": 151552,
+        "cargo_homes": 0
+      },
+      "union_bytes": 303104
+    },
+    "rust-shared-sources-two-built": {
+      "components": {
+        "a": 124653568,
+        "b": 124653568,
+        "cargo_homes": 28565504
+      },
+      "union_bytes": 277872640
+    },
+    "rust-shared-sources-parallel-built": {
+      "components": {
+        "a": 124653568,
+        "b": 124653568,
+        "cargo_homes": 28565504
+      },
+      "union_bytes": 277872640
+    },
+    "rust-shared-sources-a-cleaned": {
+      "components": {
+        "a": 151552,
+        "b": 124653568,
+        "cargo_homes": 28565504
+      },
+      "union_bytes": 153370624
+    },
+    "rust-shared-sources-b-cleaned": {
+      "components": {
+        "a": 151552,
+        "b": 151552,
+        "cargo_homes": 28565504
+      },
+      "union_bytes": 28868608
+    },
+    "rust-shared-sources-evicted": {
+      "components": {
+        "a": 151552,
+        "b": 151552,
+        "cargo_homes": 0
+      },
+      "union_bytes": 303104
+    },
+    "retained-overhead": {
+      "components": {
+        "tools": 21884928,
+        "metadata": 32768,
+        "seed-caches": 24416256
+      },
+      "union_bytes": 46333952
+    }
+  },
+  "sccache": {
+    "available": false,
+    "executable": null,
+    "measured": false,
+    "reason": "sccache executable absent from PATH; compiler-cache timing, hits, size and eviction unavailable"
+  },
+  "versions": {
+    "node": "v24.13.1",
+    "npm": "11.14.1",
+    "corepack": "0.34.6",
+    "pnpm": "10.32.1",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: aarch64-apple-darwin\nrelease: 1.98.1\nLLVM version: 22.1.8",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "git": "git version 2.54.0 (Apple Git-157)",
+    "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0\nBuildVersion:\t\t26A428"
+  },
+  "node-npm-concurrent-prepare_wall_seconds": 0.562228,
+  "node-npm-concurrent-build_wall_seconds": 0.928025,
+  "node-clone-concurrent-prepare_wall_seconds": 0.542176,
+  "node-clone-concurrent-build_wall_seconds": 0.9686,
+  "node-hardlink-concurrent-prepare_wall_seconds": 0.850797,
+  "node-hardlink-concurrent-build_wall_seconds": 0.869956,
+  "rust-private-sources-concurrent-prepare_wall_seconds": 0.105013,
+  "rust-private-sources-concurrent-build_wall_seconds": 7.920675,
+  "rust-shared-sources-concurrent-prepare_wall_seconds": 0.102635,
+  "rust-shared-sources-concurrent-build_wall_seconds": 7.462337,
+  "completed": true,
+  "elapsed_seconds": 78.275323
+}

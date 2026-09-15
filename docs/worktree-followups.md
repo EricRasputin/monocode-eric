@@ -1,6 +1,6 @@
 # Worktree feature scope
 
-Recovery storage is the final approved implementation item for this fork's worktree feature. The user-facing workflow is documented in [Worktrees in this fork](worktrees.md).
+Recovery storage, checkout capacity (#15), opt-in automatic retirement after archiving (#16), and manual generated-output cleanup (#17) are implemented for this fork. The user-facing workflow is documented in [Worktrees in this fork](worktrees.md).
 
 ## Implemented storage behavior
 
@@ -13,7 +13,17 @@ Git recovery references preserve committed code. Monocode separately saves selec
 - Background maintenance reclaims only archives with no durable lifecycle reference, then blobs without any remaining manifest. Failed retryable retirement records remain protected. Unique historical snapshots and Git recovery references never expire by age.
 - Freed SQLite pages are reused. Quiet maintenance attempts bounded physical compaction when the savings justify rewriting a reasonably sized database. A busy or interrupted compaction can retry without turning a completed retirement into a failure.
 
-The storage limit is a configurable resource budget, not a reason to discard recovery data. It excludes Git objects, checked-out files, dependencies and unrelated conversation data in SQLite.
+The storage limit is a configurable resource budget, not a reason to discard recovery data. It excludes Git objects, checked-out files, dependencies and unrelated conversation data in SQLite. Automatic retirement preserves the same immutable recovery data and leaves the checkout intact when configuration storage cannot admit the snapshot. Pending work and explanations survive restarts; raising the budget schedules another coordinated attempt without creating a duplicate recovery plan.
+
+## Archive retirement
+
+Project policy schema 1 defaults to manual review, with an independent save version for concurrent settings windows. Older automatic-cleanup preferences never opt users in. Saved automatic mode removes only eligible managed checkouts after their last conversation is archived, without requesting branch deletion, merge evidence or remote access. Native queue records survive failures and restart; manual review remains available after automatic mode is disabled, including interrupted removals. Pins, activity, Git locks, local files and capacity reservations are checked at the final removal boundary. New windows must register their leases before automatic cleanup can proceed.
+
+Disposable native tests cover shared/bulk archives, multiple windows, changing activity and pins, setup overlap and preparation handoffs, recovery quota failures, partial removal, saved policy changes, manual takeover, exact recovery, restart retry and idempotence. UI tests cover explicit saving, stale versions, generic save errors, durable explanations and archive-success isolation. No lifecycle verification uses live user worktrees.
+
+## Manual output cleanup
+
+An explicit review/execution flow clears only recognized or configured disposable directories from idle managed checkouts, including checkouts with unfinished source. It retains selected configuration in place and requires setup before subsequent workspace use. Durable intent and preparation state precede deletion; interruptions require another manual review. It uses the retirement/preparation lifecycle guards, honors capacity reservations, reports partial results, and refreshes disk accounting without equating removed-file estimates with filesystem free-space change. Clean recoverable checkouts can still retire after archiving without reinstalling dependencies.
 
 ## Deliberate boundaries
 
@@ -23,4 +33,15 @@ Monocode tracks its own active sessions, agents, terminals and setup operations.
 
 Git integration checks remain conservative. Unknown merge evidence keeps branches, while a clean, recoverable checkout can still be retired. Hosting-provider PR integration is outside scope and would need to verify the exact repository, branch and commit before authorizing deletion.
 
-Native verification for this personal fork targets macOS. Additional Windows and Linux runtime verification is left to upstream and is not a pending requirement for this feature.
+Native verification for this personal fork targets macOS. Additional Windows and Linux runtime verification remains a platform limitation. For #17, the Windows filesystem boundary was type-checked with stable Rust for `x86_64-pc-windows-msvc` using stable handle APIs. A full cross-target check was attempted but the local Mac lacks Windows C/SDK headers (`ring` could not find `assert.h`); no Windows runtime result is claimed.
+
+## Dependency sharing investigation (#18)
+
+[Measured Node and Rust fixtures](worktree-dependency-sharing.md) compare isolated
+outputs with supported stores, include shared-cache bytes and cleanup behavior,
+and distinguish disk accounting from rebuild speed. Retain this project's npm
+workflow and private build outputs. Compiler-cache results are unavailable without
+`sccache`; an opt-in follow-up needs its own measurements and cache accounting.
+
+The [combined #13 validation](worktree-combined-validation.md) records the isolated
+desktop lifecycle, issue-to-commit mapping, full checks and platform limits.

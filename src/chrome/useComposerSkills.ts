@@ -50,6 +50,7 @@ export function useComposerSkills(input: {
   executionCwd: string;
   sessionId?: string;
   pickerOpen: boolean;
+  enabled?: boolean;
 }) {
   const context = useMemo<SkillCatalogContext>(
     () => ({
@@ -89,11 +90,12 @@ export function useComposerSkills(input: {
   );
   const refresh = useCallback(
     async (options?: { refresh?: boolean }) => {
+      if (input.enabled === false) return false;
       const token = contextToken;
       const next = await loadSkills(context, options);
       return commit(token, next);
     },
-    [commit, context, contextToken],
+    [commit, context, contextToken, input.enabled],
   );
 
   useEffect(() => {

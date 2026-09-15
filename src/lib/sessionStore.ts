@@ -699,6 +699,7 @@ function recordToSession(record: SessionRecord): Session {
   const linkedWorkItem = sanitizeLinkedWorkItem(record.linkedWorkItem);
   return {
     id: record.id,
+    transcriptOnly: true,
     cwd: record.cwd,
     harness: asHarness(record.harness),
     model: record.model,

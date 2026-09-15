@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  archiveSessionsWithRetirement,
-  resumeArchivedWorktreeSession,
-} from "./worktreeRetirement";
+import { archiveSessionsWithRetirement } from "./worktreeRetirement";
 import { heartbeatWorktrees, type WorktreeRetirementPlan } from "./worktrees";
-import { newSession } from "./session";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -30,7 +26,9 @@ function fixture(sessionIds: string[]) {
   vi.mocked(invoke).mockImplementation(async (command) => {
     order.push(command);
     return (
-      command === "worktree_retirement_plan" ? emptyPlan : undefined
+      command === "worktree_archive_retirement"
+        ? { review: emptyPlan, automatic: [] }
+        : undefined
     ) as never;
   });
   const options = {
@@ -39,11 +37,65 @@ function fixture(sessionIds: string[]) {
     protectedPaths: () => paths,
     onReview: vi.fn(),
     onReviewError: vi.fn(),
+    onAutomatic: vi.fn(),
   };
   return { order, options, run: () => archiveSessionsWithRetirement(options) };
 }
 
 describe("archive retirement boundary", () => {
+  it("reports durable automatic failures without changing archive success or asking to delete branches", async () => {
+    const task = fixture(["first", "second"]);
+    const automatic = [
+      {
+        id: "checkout",
+        path: "/managed/checkout",
+        status: "failed",
+        planId: "existing-plan",
+        reason: "Recovery storage is full",
+        updatedAt: 100,
+      },
+    ];
+    vi.mocked(invoke).mockImplementation(
+      async (command) =>
+        (command === "worktree_archive_retirement"
+          ? { review: emptyPlan, automatic }
+          : undefined) as never,
+    );
+    expect(await task.run()).toBe(true);
+    expect(task.options.onAutomatic).toHaveBeenCalledExactlyOnceWith(automatic);
+    expect(task.options.onReviewError).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "worktree_retire",
+      expect.anything(),
+    );
+  });
+
+  it("can deliver one manual review and automatic completion from a mixed-project batch", async () => {
+    const task = fixture(["manual", "automatic"]);
+    const review = {
+      ...emptyPlan,
+      kept: [{ id: "manual-checkout", path: "/manual", reason: "Pinned" }],
+    };
+    const automatic = [
+      {
+        id: "automatic-checkout",
+        path: "/automatic",
+        status: "complete",
+        planId: "auto-plan",
+        reason: null,
+        updatedAt: 100,
+      },
+    ];
+    vi.mocked(invoke).mockImplementation(
+      async (command) =>
+        (command === "worktree_archive_retirement"
+          ? { review, automatic }
+          : undefined) as never,
+    );
+    expect(await task.run()).toBe(true);
+    expect(task.options.onReview).toHaveBeenCalledExactlyOnceWith(review);
+    expect(task.options.onAutomatic).toHaveBeenCalledExactlyOnceWith(automatic);
+  });
   it("commits the whole batch before releasing leases and making one review", async () => {
     const task = fixture(["first", "second", "first"]);
     expect(await task.run()).toBe(true);
@@ -51,15 +103,13 @@ describe("archive retirement boundary", () => {
       "archive:first",
       "archive:second",
       "worktree_heartbeat",
-      "worktree_retirement_plan",
+      "worktree_archive_retirement",
     ]);
     expect(invoke).toHaveBeenCalledWith("worktree_heartbeat", {
       paths: ["/repo"],
     });
-    expect(invoke).toHaveBeenCalledWith("worktree_retirement_plan", {
+    expect(invoke).toHaveBeenCalledWith("worktree_archive_retirement", {
       sessionIds: ["first", "second"],
-      cwd: null,
-      ids: [],
     });
     expect(task.options.onReview).toHaveBeenCalledExactlyOnceWith(emptyPlan);
   });
@@ -71,10 +121,8 @@ describe("archive retirement boundary", () => {
       .mockResolvedValueOnce(false);
     expect(await task.run()).toBe(false);
     expect(task.options.archive.mock.calls).toEqual([["first"], ["cancelled"]]);
-    expect(invoke).toHaveBeenLastCalledWith("worktree_retirement_plan", {
+    expect(invoke).toHaveBeenLastCalledWith("worktree_archive_retirement", {
       sessionIds: ["first"],
-      cwd: null,
-      ids: [],
     });
   });
 
@@ -89,7 +137,7 @@ describe("archive retirement boundary", () => {
   it("keeps archive successful when planning fails", async () => {
     const task = fixture(["first"]);
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === "worktree_retirement_plan")
+      if (command === "worktree_archive_retirement")
         throw new Error("Repository unavailable");
       return undefined as never;
     });
@@ -115,10 +163,8 @@ describe("archive retirement boundary", () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error("Storage failed"));
     await expect(task.run()).rejects.toThrow("Storage failed");
-    expect(invoke).toHaveBeenLastCalledWith("worktree_retirement_plan", {
+    expect(invoke).toHaveBeenLastCalledWith("worktree_archive_retirement", {
       sessionIds: ["first"],
-      cwd: null,
-      ids: [],
     });
   });
 });
@@ -155,131 +201,6 @@ describe("worktree window leases", () => {
     await expect(heartbeatWorktrees([])).resolves.toBeUndefined();
     expect(invoke).toHaveBeenLastCalledWith("worktree_heartbeat", {
       paths: [],
-    });
-  });
-});
-
-describe("resuming an archived worktree conversation", () => {
-  it("opens the saved conversation when Git rejects the Xcode license", async () => {
-    const session = {
-      ...newSession("claude", "/repo"),
-      worktreeCwd: "/checkout",
-      branch: "saved-branch",
-      blocks: [
-        {
-          id: "saved-message",
-          role: "user" as const,
-          text: "Saved conversation",
-        },
-      ],
-    };
-    const error =
-      "You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window to review and agree to the Xcode and Apple SDKs license.";
-    vi.mocked(invoke).mockRejectedValueOnce(error);
-
-    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
-      session,
-      resumed: false,
-      worktreeError: error,
-    });
-    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-      "worktree_prepare",
-    ]);
-  });
-
-  it("restores before making the saved conversation active again", async () => {
-    const session = {
-      ...newSession("claude", "/repo"),
-      worktreeCwd: "/checkout",
-    };
-    vi.mocked(invoke)
-      .mockResolvedValueOnce("/checkout")
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce(undefined);
-    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
-      session: { ...session, branch: undefined },
-      resumed: true,
-    });
-    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-      "worktree_prepare",
-      "worktree_setup",
-      "session_set_archived",
-    ]);
-    expect(invoke).toHaveBeenLastCalledWith("session_set_archived", {
-      sessionId: session.id,
-      archived: false,
-    });
-  });
-
-  it("keeps the archive intact if its checkout cannot be restored", async () => {
-    const session = {
-      ...newSession("claude", "/repo"),
-      worktreeCwd: "/checkout",
-    };
-    vi.mocked(invoke)
-      .mockResolvedValueOnce("/checkout")
-      .mockRejectedValueOnce(new Error("Setup command failed"));
-    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
-      session,
-      resumed: false,
-      worktreeError: "Error: Setup command failed",
-    });
-    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-      "worktree_prepare",
-      "worktree_setup",
-    ]);
-  });
-
-  it("retries preparation after the toolchain recovers and only then unarchives", async () => {
-    const session = {
-      ...newSession("claude", "/repo"),
-      worktreeCwd: "/checkout",
-      branch: "saved-branch",
-    };
-    vi.mocked(invoke)
-      .mockRejectedValueOnce(
-        "You have not agreed to the Xcode license agreements.",
-      )
-      .mockResolvedValueOnce("/checkout")
-      .mockResolvedValue(undefined);
-
-    expect((await resumeArchivedWorktreeSession(session)).resumed).toBe(false);
-    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
-      session: { ...session, branch: undefined },
-      resumed: true,
-    });
-    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-      "worktree_prepare",
-      "worktree_prepare",
-      "worktree_setup",
-      "session_set_archived",
-    ]);
-  });
-
-  it("still reports failures to save the conversation's archive state", async () => {
-    const session = {
-      ...newSession("claude", "/repo"),
-      worktreeCwd: "/checkout",
-    };
-    vi.mocked(invoke)
-      .mockResolvedValueOnce("/checkout")
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("Storage unavailable"));
-    await expect(resumeArchivedWorktreeSession(session)).rejects.toThrow(
-      "Storage unavailable",
-    );
-  });
-
-  it("opens conversations in the current checkout without preparing a worktree", async () => {
-    const session = newSession("claude", "/repo");
-    vi.mocked(invoke).mockResolvedValue(undefined);
-    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
-      session,
-      resumed: true,
-    });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("session_set_archived", {
-      sessionId: session.id,
-      archived: false,
     });
   });
 });
