@@ -34,6 +34,7 @@ import { WorktreeRetirementDialog } from "./WorktreeRetirementDialog";
 import { WorktreeEnvironmentSettings } from "./WorktreeEnvironmentSettings";
 import { WorktreeDiskSettings } from "./WorktreeDiskSettings";
 import { WorktreeRecoveryStorage } from "./WorktreeRecoveryStorage";
+import { WorktreeOutputCleanup } from "./WorktreeOutputCleanup";
 import { WorktreeAutomaticRetirement } from "./WorktreeAutomaticRetirement";
 
 const button =
@@ -132,6 +133,7 @@ function ProjectWorktreeCleanup({
   onOpen: (worktreeCwd: string) => Promise<void>;
 }) {
   const { overview, error: loadError, pending } = useWorktrees(cwd);
+  const [outputReviewing, setOutputReviewing] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const [reviewPlan, setReviewPlan] = useState<WorktreeRetirementPlan | null>(
     null,
@@ -215,13 +217,13 @@ function ProjectWorktreeCleanup({
         <WorktreeProjectPicker
           cwd={cwd}
           projects={projects}
-          disabled={busy || !!reviewPlan}
+          disabled={busy || !!reviewPlan || outputReviewing}
           autoFocus={focusPicker}
           onSelect={onSelectProject}
         />
         <button
           className={quietButton}
-          disabled={busy || pending || !!reviewPlan}
+          disabled={busy || pending || !!reviewPlan || outputReviewing}
           onClick={() => void run(() => refreshWorktrees(cwd))}
         >
           <RefreshCw
@@ -237,7 +239,7 @@ function ProjectWorktreeCleanup({
           cwd={cwd}
           policy={overview.retirementPolicy}
           items={overview.automaticRetirement}
-          disabled={busy || !!reviewPlan}
+          disabled={busy || !!reviewPlan || outputReviewing}
           onSaved={() => refreshWorktrees(cwd)}
         />
       ) : null}
@@ -246,12 +248,22 @@ function ProjectWorktreeCleanup({
         <WorktreeEnvironmentSettings
           cwd={cwd}
           settings={overview.settings}
-          disabled={busy || !!reviewPlan}
+          disabled={busy || !!reviewPlan || outputReviewing}
           onSaved={() => refreshWorktrees(cwd)}
         />
       ) : null}
 
       <WorktreeRecoveryStorage projectCwd={overview?.projectCwd ?? cwd} />
+
+      {overview ? (
+        <WorktreeOutputCleanup
+          cwd={cwd}
+          entries={entries}
+          disabled={busy || !!reviewPlan}
+          onChanged={() => refreshWorktrees(cwd)}
+          onReviewingChange={setOutputReviewing}
+        />
+      ) : null}
 
       <div>
         <h2 className="text-[13px] font-medium">Cleanup</h2>
@@ -308,7 +320,7 @@ function ProjectWorktreeCleanup({
                       type="checkbox"
                       aria-label={`Select ${displayName(entry)}`}
                       checked={selected.includes(entry.id!)}
-                      disabled={busy || !!reviewPlan}
+                      disabled={busy || !!reviewPlan || outputReviewing}
                       className="size-3.5 shrink-0 accent-accent"
                       onChange={(event) =>
                         setSelection(
@@ -337,7 +349,7 @@ function ProjectWorktreeCleanup({
                   <button
                     className={quietButton}
                     title="Keep this worktree"
-                    disabled={busy || !!reviewPlan}
+                    disabled={busy || !!reviewPlan || outputReviewing}
                     onClick={() => void run(() => pinWorktree(entry.id!, true))}
                   >
                     <Pin className="size-3.5" /> Pin
@@ -371,7 +383,9 @@ function ProjectWorktreeCleanup({
                 </span>
                 <button
                   className={`${button} bg-content/5`}
-                  disabled={busy || !!reviewPlan || !selected.length}
+                  disabled={
+                    busy || !!reviewPlan || outputReviewing || !selected.length
+                  }
                   onClick={() => void reviewRetirement()}
                 >
                   Review retirement ({selected.length}){" "}
@@ -411,7 +425,7 @@ function ProjectWorktreeCleanup({
                   {entry.id && (
                     <button
                       className={quietButton}
-                      disabled={busy}
+                      disabled={busy || outputReviewing}
                       onClick={() =>
                         void run(() => pinWorktree(entry.id!, !entry.pinned))
                       }
@@ -426,7 +440,7 @@ function ProjectWorktreeCleanup({
                   )}
                   <button
                     className={quietButton}
-                    disabled={busy}
+                    disabled={busy || outputReviewing}
                     onClick={() =>
                       void run(() =>
                         onOpen(

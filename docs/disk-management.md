@@ -82,6 +82,14 @@ cleanup invalidates disk measurements before the next admission and schedules a
 refresh outside mutation locks. Disk pressure never enables automatic retirement
 or changes a project's saved choice.
 
+Manual **Clear generated files** can reduce output usage while retaining an
+unfinished checkout. It shares repository/lifecycle coordination and blocks on
+active reservations. Its exact intent and setup-needed state commit before any
+deletion; setup uses the ordinary capacity admission path on later workspace use.
+Partial attempts also invalidate cached usage. Cleanup reports removed-file
+estimates separately from the observed filesystem free-space delta, which may be
+negative or unavailable. See [the output-cleanup workflow](worktrees.md#clear-generated-files-while-keeping-a-checkout).
+
 Capacity errors cross IPC as structured `WORKTREE_CAPACITY` failures with reason,
 requested path/operation, required growth, affected volume, a timestamped snapshot
 and cleanup/settings/reuse guidance. Other workspace errors remain strings.

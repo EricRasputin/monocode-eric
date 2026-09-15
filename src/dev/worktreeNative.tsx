@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { WorktreeRetirementDialog } from "../chrome/WorktreeRetirementDialog";
 import { WorktreeRecoveryStorage } from "../chrome/WorktreeRecoveryStorage";
+import { WorktreeOutputCleanup } from "../chrome/WorktreeOutputCleanup";
 import { WorktreeAutomaticRetirement } from "../chrome/WorktreeAutomaticRetirement";
 import { refreshWorktrees, useWorktrees } from "../hooks/useWorktrees";
 import { newSession, type Session } from "../lib/session";
@@ -210,6 +211,14 @@ function NativeWorktreeVerification() {
           items={overview.automaticRetirement}
           disabled={busy}
           onSaved={() => refreshWorktrees(repo)}
+        />
+      ) : null}
+      {overview ? (
+        <WorktreeOutputCleanup
+          cwd={repo}
+          entries={overview.entries}
+          disabled={busy}
+          onChanged={() => refreshWorktrees(repo)}
         />
       ) : null}
       <div className="flex flex-wrap gap-3">

@@ -114,6 +114,10 @@ impl Directory {
         file_identity(&self.file)
     }
 
+    pub(super) fn same_filesystem(&self, other: &Self) -> Result<bool, String> {
+        Ok(self.identity()?.split(':').next() == other.identity()?.split(':').next())
+    }
+
     pub(super) fn check(&self) -> Result<(), String> {
         let metadata = std::fs::symlink_metadata(&self.path).map_err(|e| e.to_string())?;
         #[cfg(unix)]
@@ -165,7 +169,11 @@ impl Directory {
         }
         #[cfg(windows)]
         {
-            Self::open_one(&self.path.join(name))
+            let child = Self::open_one(&self.path.join(name))?;
+            if !self.same_filesystem(&child)? {
+                return Err("Output crosses a filesystem mount; kept".into());
+            }
+            Ok(child)
         }
     }
 

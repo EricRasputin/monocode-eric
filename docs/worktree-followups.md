@@ -1,6 +1,6 @@
 # Worktree feature scope
 
-Recovery storage, checkout capacity (#15), and opt-in automatic retirement after archiving (#16) are implemented for this fork. The user-facing workflow is documented in [Worktrees in this fork](worktrees.md).
+Recovery storage, checkout capacity (#15), opt-in automatic retirement after archiving (#16), and manual generated-output cleanup (#17) are implemented for this fork. The user-facing workflow is documented in [Worktrees in this fork](worktrees.md).
 
 ## Implemented storage behavior
 
@@ -21,6 +21,10 @@ Project policy schema 1 defaults to manual review, with an independent save vers
 
 Disposable native tests cover shared/bulk archives, multiple windows, changing activity and pins, setup overlap and preparation handoffs, recovery quota failures, partial removal, saved policy changes, manual takeover, exact recovery, restart retry and idempotence. UI tests cover explicit saving, stale versions, generic save errors, durable explanations and archive-success isolation. No lifecycle verification uses live user worktrees.
 
+## Manual output cleanup
+
+An explicit review/execution flow clears only recognized or configured disposable directories from idle managed checkouts, including checkouts with unfinished source. It retains selected configuration in place and requires setup before subsequent workspace use. Durable intent and preparation state precede deletion; interruptions require another manual review. It uses the retirement/preparation lifecycle guards, honors capacity reservations, reports partial results, and refreshes disk accounting without equating removed-file estimates with filesystem free-space change. Clean recoverable checkouts can still retire after archiving without reinstalling dependencies.
+
 ## Deliberate boundaries
 
 Export and explicitly forgetting historical configuration snapshots are optional future features, outside this completed scope. They would need a separate review naming affected conversations and explaining the loss of configuration recovery. No such deletion is performed automatically.
@@ -29,4 +33,4 @@ Monocode tracks its own active sessions, agents, terminals and setup operations.
 
 Git integration checks remain conservative. Unknown merge evidence keeps branches, while a clean, recoverable checkout can still be retired. Hosting-provider PR integration is outside scope and would need to verify the exact repository, branch and commit before authorizing deletion.
 
-Native verification for this personal fork targets macOS. Additional Windows and Linux runtime verification is left to upstream and is not a pending requirement for this feature.
+Native verification for this personal fork targets macOS. Additional Windows and Linux runtime verification remains a platform limitation. For #17, the Windows filesystem boundary was type-checked with stable Rust for `x86_64-pc-windows-msvc` using stable handle APIs. A full cross-target check was attempted but the local Mac lacks Windows C/SDK headers (`ring` could not find `assert.h`); no Windows runtime result is claimed.

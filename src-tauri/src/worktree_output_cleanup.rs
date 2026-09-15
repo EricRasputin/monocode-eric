@@ -51,6 +51,8 @@ pub struct Report {
     id: String,
     path: String,
     status: String,
+    #[serde(default)]
+    selected_paths: Vec<String>,
     results: Vec<ItemResult>,
     estimated_removed_bytes: u64,
     observed_free_space_change: Option<i64>,
@@ -187,10 +189,18 @@ impl GitWatch {
     fn new(entry: &Owned) -> Result<Self, String> {
         let root = Path::new(&entry.path);
         let private = PathBuf::from(git(root, &["rev-parse", "--absolute-git-dir"])?);
-        let mut files = Vec::new();
+        let mut files = vec![root.join(".git")];
         let mut locks = Vec::new();
         for directory in [PathBuf::from(&entry.common), private] {
-            for name in ["index", "HEAD", "packed-refs", "config", "shallow"] {
+            for name in [
+                "index",
+                "HEAD",
+                "packed-refs",
+                "config",
+                "shallow",
+                "commondir",
+                "gitdir",
+            ] {
                 files.push(directory.join(name));
                 locks.push(directory.join(format!("{name}.lock")));
             }
@@ -273,6 +283,30 @@ fn copies(
     environment::settings_at_checkout_root(scope, settings).copy_paths
 }
 
+struct Preservation {
+    paths: Vec<String>,
+    identities: HashSet<String>,
+}
+impl Preservation {
+    fn new(root: &Path, paths: &[String]) -> Result<Self, String> {
+        let mut identities = HashSet::new();
+        for path in paths {
+            if let Some(metadata) = environment::safe_metadata(root, path)? {
+                if !metadata.is_file() {
+                    return Err(format!(
+                        "Selected configuration is not a regular file: {path}"
+                    ));
+                }
+                identities.insert(output_fs::path_identity(&root.join(path), &metadata)?);
+            }
+        }
+        Ok(Self {
+            paths: paths.to_vec(),
+            identities,
+        })
+    }
+}
+
 fn inspect_candidate(root: &Path, path: String, copies: &[String]) -> Candidate {
     let preserved_paths = copies
         .iter()
@@ -292,11 +326,14 @@ fn inspect_candidate(root: &Path, path: String, copies: &[String]) -> Candidate 
             .filter(|m| m.is_dir())
             .ok_or("Output directory is absent or is not a directory")?;
         let directory = Directory::open(&root.join(&candidate.path))?;
+        if !directory.same_filesystem(&Directory::open(root)?)? {
+            return Err("Output crosses a filesystem mount; kept".into());
+        }
         candidate.identity = Some(directory.identity()?);
         walk(
             &directory,
             Path::new(&candidate.path),
-            &candidate.preserved_paths,
+            &Preservation::new(root, copies)?,
             false,
             &mut candidate.estimated_bytes,
             &mut |_| Ok(()),
@@ -311,23 +348,45 @@ fn inspect_candidate(root: &Path, path: String, copies: &[String]) -> Candidate 
 fn walk(
     directory: &Directory,
     relative: &Path,
-    preserved: &[String],
+    preserved: &Preservation,
     delete: bool,
     bytes: &mut u64,
     before_remove: &mut impl FnMut(&Path) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    let mut retained = false;
     for name in directory.names()? {
         let path = relative.join(&name);
-        if preserved.iter().any(|p| selected_path(&path, p, false)) {
+        if preserved
+            .paths
+            .iter()
+            .any(|p| selected_path(&path, p, false))
+        {
+            retained = true;
             continue;
         }
         let metadata = directory.metadata(&name)?;
+        if metadata.is_file()
+            && !is_link(&metadata)
+            && !preserved.identities.is_empty()
+            && preserved
+                .identities
+                .contains(&directory.entry_identity(&name)?)
+        {
+            retained = true;
+            continue;
+        }
         if metadata.is_dir() && !is_link(&metadata) {
             let child = directory.child(&name)?;
-            walk(&child, &path, preserved, delete, bytes, before_remove)?;
+            let child_retained = walk(&child, &path, preserved, delete, bytes, before_remove)?;
             child.check()?;
             drop(child);
-            if preserved.iter().any(|p| selected_path(&path, p, true)) {
+            if child_retained
+                || preserved
+                    .paths
+                    .iter()
+                    .any(|p| selected_path(&path, p, true))
+            {
+                retained = true;
                 continue;
             }
             if delete {
@@ -356,7 +415,7 @@ fn walk(
             *bytes = bytes.saturating_add(estimated_bytes(&metadata));
         }
     }
-    Ok(())
+    Ok(retained)
 }
 
 fn review(
@@ -481,6 +540,7 @@ fn execute_with(
         id: entry.id.clone(),
         path: entry.path.clone(),
         status: "executing".into(),
+        selected_paths: selected.to_vec(),
         results: Vec::new(),
         estimated_removed_bytes: 0,
         observed_free_space_change: None,
@@ -541,6 +601,9 @@ fn execute_with(
             environment::safe_metadata(Path::new(&entry.path), path)?
                 .ok_or("Output directory no longer exists")?;
             let directory = Directory::open(&Path::new(&entry.path).join(path))?;
+            if !directory.same_filesystem(&Directory::open(Path::new(&entry.path))?)? {
+                return Err("Output crosses a filesystem mount; kept".into());
+            }
             if Some(directory.identity()?) != candidate.identity {
                 return Err("Output directory was replaced; review again".into());
             }
@@ -564,7 +627,13 @@ fn execute_with(
             walk(
                 &directory,
                 Path::new(path),
-                &candidate.preserved_paths,
+                &Preservation::new(
+                    Path::new(&entry.path),
+                    &copies(
+                        &environment::scope_for_entry(conn, &entry)?,
+                        &snapshot.settings,
+                    ),
+                )?,
                 true,
                 &mut removed,
                 &mut guarded_remove,

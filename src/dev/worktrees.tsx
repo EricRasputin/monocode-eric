@@ -19,6 +19,10 @@ import {
   RECOVERY_STORAGE_MIB,
   type RecoveryStorageUsage,
 } from "../lib/worktreeStorage";
+import type {
+  OutputReview,
+  OutputCleanupReport,
+} from "../lib/worktreeOutputCleanup";
 import "../index.css";
 
 // A separate Vite entry: never imported by the desktop app or its release bundle.
@@ -42,6 +46,9 @@ const scenario: Scenario =
   requestedScenario === "Restoration"
     ? requestedScenario
     : "Populated";
+const outputPlans = new Map<string, OutputReview>();
+const outputReports = new Map<string, OutputCleanupReport[]>();
+let outputRemovedBytes = 0;
 const day = 86_400_000;
 const entries = new Map<string, WorktreeEntry[]>();
 const projectSettings = new Map<string, WorktreeSettings>();
@@ -93,7 +100,7 @@ function diskSnapshot(): DiskSnapshot {
     settings: diskPolicy,
     measuredAt: Date.now(),
     complete: true,
-    usedBytes: 12 * DISK_GIB,
+    usedBytes: 12 * DISK_GIB - outputRemovedBytes,
     reclaimableBytes: 4 * DISK_GIB,
     pendingBytes: 0,
     checkouts: [],
@@ -102,7 +109,7 @@ function diskSnapshot(): DiskSnapshot {
       {
         id: "preview-volume",
         path: "/Users/demo",
-        availableBytes: 42 * DISK_GIB,
+        availableBytes: 42 * DISK_GIB + outputRemovedBytes,
         measuredAt: Date.now(),
       },
     ],
@@ -360,6 +367,7 @@ mockIPC(
       archived?: boolean;
       id?: string;
       ids?: string[];
+      paths?: string[];
       pinned?: boolean;
       sessionIds?: string[];
       planId?: string;
@@ -370,6 +378,94 @@ mockIPC(
       expectedVersion?: number;
     };
     const cwd = payload?.cwd ?? paths[0];
+    if (command === "worktree_output_history")
+      return outputReports.get(cwd) ?? [];
+    if (command === "worktree_output_review") {
+      const entry = currentEntries(cwd).find(
+        (entry) => entry.id === payload.id,
+      );
+      if (!entry) throw new Error("Checkout is unavailable");
+      const plan: OutputReview = {
+        planId: crypto.randomUUID(),
+        id: entry.id!,
+        path: entry.path,
+        branch: entry.branch ?? "",
+        blockedReason: entry.pinned
+          ? "Pinned"
+          : entry.retirementPending
+            ? "Checkout retirement is pending"
+            : null,
+        candidates: [
+          {
+            path: "node_modules",
+            estimatedBytes: 2 * DISK_GIB,
+            preservedPaths: [],
+            blockedReason: null,
+          },
+          {
+            path: "dist",
+            estimatedBytes: DISK_GIB / 2,
+            preservedPaths: ["dist/.env"],
+            blockedReason: null,
+          },
+          {
+            path: "packages/demo/dist",
+            estimatedBytes: 0,
+            preservedPaths: [],
+            blockedReason:
+              "Candidate contains tracked files: packages/demo/dist/source.js",
+          },
+        ],
+      };
+      outputPlans.set(plan.planId, plan);
+      return plan;
+    }
+    if (command === "worktree_output_execute") {
+      const plan = outputPlans.get(payload.planId!);
+      if (!plan) throw new Error("Review again before cleanup");
+      outputPlans.delete(plan.planId);
+      const partial = previewParams.get("outputs") === "partial";
+      const interrupted = previewParams.get("outputs") === "interrupted";
+      const results = (payload.paths ?? []).map((path) => ({
+        path,
+        estimatedRemovedBytes:
+          partial && path === "dist"
+            ? 0
+            : plan.candidates.find((c) => c.path === path)!.estimatedBytes,
+        error:
+          partial && path === "dist"
+            ? "Output directory changed; review again"
+            : null,
+      }));
+      const bytes = results.reduce(
+        (sum, r) => sum + r.estimatedRemovedBytes,
+        0,
+      );
+      outputRemovedBytes += bytes;
+      const report: OutputCleanupReport = {
+        planId: plan.planId,
+        id: plan.id,
+        path: plan.path,
+        status: interrupted ? "interrupted" : partial ? "partial" : "complete",
+        selectedPaths: payload.paths ?? [],
+        results: interrupted ? [] : results,
+        estimatedRemovedBytes: interrupted ? 0 : bytes,
+        observedFreeSpaceChange: interrupted ? null : bytes - DISK_GIB / 4,
+        measurementError: null,
+        preparationNeeded: true,
+      };
+      const projectCwd =
+        [...entries].find(([, rows]) =>
+          rows.some((entry) => entry.id === plan.id),
+        )?.[0] ?? cwd;
+      outputReports.set(projectCwd, [
+        report,
+        ...(outputReports.get(projectCwd) ?? []),
+      ]);
+      void emit("worktree-output-changed");
+      void emit("worktree-disk-changed");
+      return report;
+    }
     if (command === "worktree_disk_get") return diskSnapshot();
     if (command === "worktree_disk_settings_set") {
       const requested = (args as { settings: DiskSettings }).settings;

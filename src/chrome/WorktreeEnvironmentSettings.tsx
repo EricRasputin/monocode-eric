@@ -206,9 +206,10 @@ export function WorktreeEnvironmentSettings({
             }}
           />
           <span className="mt-1 block text-[11px] leading-4 text-content/35">
-            Standard dependency and build folders are removed automatically.
+            Standard dependency and build folders are recognized for cleanup.
             Add other ignored generated folders here, one per line, relative to
-            this project.
+            this project. Selected copy files inside these folders are
+            preserved.
           </span>
         </label>
 

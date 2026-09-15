@@ -13,6 +13,10 @@ import {
   type WorktreeOverview,
   type WorktreeRetirementPlan,
 } from "../lib/worktrees";
+import {
+  reviewWorktreeOutputs,
+  executeWorktreeOutputCleanup,
+} from "../lib/worktreeOutputCleanup";
 import { archiveProject, rememberProject } from "../lib/recents";
 
 vi.mock("../hooks/useWorktrees", () => ({
@@ -26,6 +30,14 @@ vi.mock("../lib/worktrees", async (importOriginal) => ({
   retireWorktrees: vi.fn(),
   saveWorktreeSettings: vi.fn(),
   pinWorktree: vi.fn(),
+}));
+vi.mock("../lib/worktreeOutputCleanup", () => ({
+  getWorktreeOutputHistory: vi.fn().mockResolvedValue([]),
+  reviewWorktreeOutputs: vi.fn(),
+  executeWorktreeOutputCleanup: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
 }));
 vi.mock("./WorktreeDiskSettings", () => ({
   WorktreeDiskSettings: () =>
@@ -708,4 +720,44 @@ describe("worktree retirement inventory", () => {
       "Working folder removed",
     );
   });
+});
+
+it("reviews outputs of a kept unfinished checkout and locks conflicting settings actions", async () => {
+  vi.mocked(useWorktrees).mockReturnValue({
+    overview: {
+      ...overview,
+      entries: [
+        { ...entry, id: "dirty", blockedReason: "Local source is modified" },
+      ],
+    },
+    error: null,
+    pending: false,
+  });
+  vi.mocked(reviewWorktreeOutputs).mockResolvedValue({
+    planId: "outputs",
+    id: "dirty",
+    path: entry.path,
+    branch: entry.branch,
+    blockedReason: null,
+    candidates: [
+      {
+        path: "dist",
+        estimatedBytes: 10,
+        preservedPaths: [],
+        blockedReason: null,
+      },
+    ],
+  });
+  await render();
+  expect(container.textContent).toContain("Nothing ready to retire");
+  await act(async () => button("Review generated files").click());
+  expect(reviewWorktreeOutputs).toHaveBeenCalledExactlyOnceWith(
+    "/repo",
+    "dirty",
+  );
+  expect(button("Clear selected outputs").disabled).toBe(false);
+  expect(button("Refresh").disabled).toBe(true);
+  expect(executeWorktreeOutputCleanup).not.toHaveBeenCalled();
+  await act(async () => button("Cancel review").click());
+  expect(button("Refresh").disabled).toBe(false);
 });

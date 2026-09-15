@@ -54,7 +54,7 @@ export const SETTINGS_SECTIONS: {
     id: "worktrees",
     label: "Worktrees",
     description:
-      "Review worktrees by project. Retire finished work when you’re ready.",
+      "Review worktrees by project. Clear generated files or retire finished work.",
   },
   {
     id: "archive",

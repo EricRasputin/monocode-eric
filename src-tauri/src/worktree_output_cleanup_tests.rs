@@ -345,6 +345,11 @@ fn partial_deletion_is_reported_and_disk_cache_invalidated() {
     write(&entry, "dist/a", &"a".repeat(8192));
     write(&entry, "dist/b", &"b".repeat(8192));
     write(&entry, "node_modules/c", &"c".repeat(8192));
+    let before_disk = f
+        .host
+        .disk
+        .snapshot(&f.conn, &HashMap::new(), &[], true)
+        .unwrap();
     let review = plan(&f, &entry);
     let report = execute_with(
         &f.conn,
@@ -370,6 +375,15 @@ fn partial_deletion_is_reported_and_disk_cache_invalidated() {
     assert_eq!(
         history(&f.conn, &entry.repo).unwrap()[0].estimated_removed_bytes,
         report.estimated_removed_bytes
+    );
+    let after_disk = f
+        .host
+        .disk
+        .snapshot(&f.conn, &HashMap::new(), &[], false)
+        .unwrap();
+    assert!(
+        after_disk.used_bytes < before_disk.used_bytes,
+        "partial cleanup returned stale disk usage"
     );
     assert!(environment::needs_setup(&f.conn, &entry.path).unwrap());
 }
@@ -414,6 +428,16 @@ fn interrupted_cleanup_restart_and_failed_origin_setup_retry_preserve_source() {
             },
         )
     }));
+    let intent: String = f
+        .conn
+        .query_row(
+            "SELECT report_json FROM worktree_output_cleanups WHERE plan_id = ?1",
+            [&review.plan_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let intent: Report = serde_json::from_str(&intent).unwrap();
+    assert_eq!(intent.selected_paths, vec!["nested/dist"]);
     assert!(interrupted.is_err());
     let reopened = Connection::open(&f.db).unwrap();
     super::super::schema(&reopened).unwrap();
@@ -564,4 +588,125 @@ fn pending_retirement_blocks_output_cleanup() {
 pub(crate) fn clear_for_retirement(f: &Fixture, entry: &Owned) {
     let review = plan(f, entry);
     assert_eq!(execute(f, &review, &["node_modules"]).status, "complete");
+}
+
+#[test]
+fn failure_to_persist_intent_rolls_back_preparation_and_keeps_all_outputs() {
+    let (f, entry) = fixture("output-persistence");
+    write(&entry, "dist/output", "generated");
+    let review = plan(&f, &entry);
+    f.conn.execute_batch("CREATE TRIGGER fail_output_intent BEFORE UPDATE ON worktree_output_cleanups BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END;").unwrap();
+    assert!(execute_with(
+        &f.conn,
+        &f.host,
+        &review.plan_id,
+        &["dist".into()],
+        Clone::clone,
+        |_| panic!("must not delete before intent commits")
+    )
+    .unwrap_err()
+    .contains("storage failure"));
+    assert!(!environment::needs_setup(&f.conn, &entry.path).unwrap());
+    assert!(Path::new(&entry.path).join("dist/output").exists());
+}
+
+#[test]
+fn checkout_root_replacement_after_review_is_rejected() {
+    let (f, entry) = fixture("output-root-replaced");
+    write(&entry, "dist/output", "generated");
+    let review = plan(&f, &entry);
+    let old = Path::new(&entry.path).with_file_name("previous-checkout");
+    std::fs::rename(&entry.path, &old).unwrap();
+    write(&entry, "dist/output", "new root data");
+    std::fs::copy(old.join(".git"), Path::new(&entry.path).join(".git")).unwrap();
+    assert!(execute_with(
+        &f.conn,
+        &f.host,
+        &review.plan_id,
+        &["dist".into()],
+        Clone::clone,
+        |_| Ok(())
+    )
+    .unwrap_err()
+    .contains("replaced"));
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&entry.path).join("dist/output")).unwrap(),
+        "new root data"
+    );
+}
+
+#[test]
+fn git_identity_replacement_during_walk_keeps_remaining_outputs() {
+    let (f, entry) = fixture("output-git-replaced");
+    write(&entry, "dist/output", "generated");
+    let review = plan(&f, &entry);
+    let report = execute_with(
+        &f.conn,
+        &f.host,
+        &review.plan_id,
+        &["dist".into()],
+        Clone::clone,
+        |_| {
+            write(&entry, ".git", "gitdir: /nonexistent-foreign-repository");
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(report.status, "partial");
+    assert!(report.results[0]
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("Git index"));
+    assert!(Path::new(&entry.path).join("dist/output").exists());
+}
+
+#[test]
+fn selected_configuration_case_aliases_and_internal_symlinks_are_kept_safely() {
+    let (f, entry) = fixture("output-copy-alias");
+    configure(&f, &entry, &["DIST/.env"], &[], "");
+    write(&entry, "dist/.ENV", "configuration");
+    write(&entry, "dist/output", "generated");
+    #[cfg(unix)]
+    {
+        let outside = f.dir.join("external-config");
+        std::fs::write(&outside, "external").unwrap();
+        std::os::unix::fs::symlink(&outside, Path::new(&entry.path).join("dist/link")).unwrap();
+    }
+    let review = plan(&f, &entry);
+    assert_eq!(execute(&f, &review, &["dist"]).status, "complete");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&entry.path).join("dist/.ENV")).unwrap(),
+        "configuration"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read_to_string(f.dir.join("external-config")).unwrap(),
+        "external"
+    );
+}
+
+#[test]
+fn selected_file_identity_protects_unicode_aliases_and_ancestor_directories() {
+    let (f, entry) = fixture("output-config-identity");
+    write(
+        &entry,
+        "dist/cafe\u{301}/local.env",
+        "selected configuration",
+    );
+    // A hard link models a second spelling/normalization of a selected local
+    // file on every platform, including case-sensitive Linux filesystems.
+    std::fs::hard_link(
+        Path::new(&entry.path).join("dist/cafe\u{301}/local.env"),
+        Path::new(&entry.path).join(".env"),
+    )
+    .unwrap();
+    configure(&f, &entry, &[".env"], &[], "");
+    write(&entry, "dist/output", "generated");
+    assert_eq!(execute(&f, &plan(&f, &entry), &["dist"]).status, "complete");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&entry.path).join("dist/cafe\u{301}/local.env")).unwrap(),
+        "selected configuration"
+    );
+    assert!(!Path::new(&entry.path).join("dist/output").exists());
 }

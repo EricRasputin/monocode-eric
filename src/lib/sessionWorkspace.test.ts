@@ -428,3 +428,45 @@ describe("transcript workspace boundary", () => {
     expect(isLiveHarness("claude")).toBe(true);
   });
 });
+
+describe("output cleanup preparation", () => {
+  it("checks native setup again after outputs are cleared and retries files without losing history", async () => {
+    const f = fixture();
+    await f.prepare(f.session);
+    const saved = [...f.session.blocks];
+    f.setup.mockRejectedValueOnce(
+      new Error("Dependency setup failed after output cleanup"),
+    );
+    await expect(
+      prepareWorkspacePath(
+        f.session,
+        "/canonical/checkout/source.ts",
+        f.prepare,
+      ),
+    ).rejects.toThrow("Dependency setup failed");
+    expect(f.session.blocks).toEqual(saved);
+    expect(f.session.worktreeCwd).toBe("/canonical/checkout");
+    expect(
+      await prepareWorkspacePath(
+        f.session,
+        "/canonical/checkout/source.ts",
+        f.prepare,
+      ),
+    ).toBe("/canonical/checkout/source.ts");
+    expect(f.setup).toHaveBeenCalledTimes(3);
+    expect(bindHarnessSession).not.toHaveBeenCalled();
+  });
+
+  it("does not bind a coding provider if preparation fails after earlier workspace use", async () => {
+    const f = fixture();
+    await f.prepare(f.session);
+    f.setup.mockRejectedValueOnce(new Error("Setup retry needed"));
+    await expect(
+      prepareProviderWorkspace(f.session, f.prepare, () => true),
+    ).rejects.toThrow("Setup retry needed");
+    expect(bindHarnessSession).not.toHaveBeenCalled();
+    await prepareProviderWorkspace(f.session, f.prepare, () => true);
+    expect(bindHarnessSession).toHaveBeenCalledOnce();
+    expect(f.session.blocks[0].text).toBe("Saved messages");
+  });
+});
