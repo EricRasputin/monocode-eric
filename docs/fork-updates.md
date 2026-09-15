@@ -6,8 +6,10 @@ Install the appropriate macOS DMG from
 and saved conversations. Do not install upstream MonoCode as a fork update.
 
 Choose **Check for Updates…** from the app menu or Settings. If a newer release
-exists, the app shows its version and release notes and asks whether to install
-and restart. Declining leaves the app running. Accepting downloads the package,
+exists, the app shows its version and asks whether to install and restart.
+As in upstream, the confirmation contains a one-line release label. Complete
+release notes are available on GitHub and in the post-update **What's new** view.
+Declining leaves the app running. Accepting downloads the package,
 verifies its signature, installs it, and restarts. Startup checks also show an
 available update in the sidebar. Failed checks or downloads do not count as a
 successful update.
@@ -95,6 +97,9 @@ check CI. Selecting another branch never publishes, even with the option enabled
 - A single publisher validates artifact hashes and commit/version consistency,
   then uploads all packages, `SHA256SUMS`, and `latest.json` to a draft release.
   Only a complete upload becomes public and the latest release.
+- The update feed uses upstream's one-line notes format (`MonoCode Fork <version>`).
+  The native update dialog cannot scroll, so embedding the full changelog can
+  hide the install button.
 - The app reads `releases/latest/download/latest.json`; package URLs point to
   immutable version tags. The embedded public key verifies update signatures.
 - An automatic version selection for an already-released commit skips packaging.
