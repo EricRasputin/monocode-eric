@@ -923,7 +923,7 @@ function Preview() {
                   );
               }}
             >
-              Restore workspace
+              Resume workspace
             </button>
           </div>
         ) : null}
