@@ -195,7 +195,7 @@ export function WorktreeEnvironmentSettings({
             spellCheck={false}
             disabled={busy}
             value={draft.disposablePaths}
-            placeholder={"node_modules\n.next"}
+            placeholder={"coverage\n.next"}
             className={field}
             onChange={(event) => {
               setDraft((current) => ({
@@ -206,8 +206,9 @@ export function WorktreeEnvironmentSettings({
             }}
           />
           <span className="mt-1 block text-[11px] leading-4 text-content/35">
-            Deleted with the worktree and recreated by setup. One ignored folder
-            per line, relative to this project.
+            Standard dependency and build folders are removed automatically.
+            Add other ignored generated folders here, one per line, relative to
+            this project.
           </span>
         </label>
 

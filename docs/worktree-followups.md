@@ -4,7 +4,7 @@ Recovery storage is the final approved implementation item for this fork's workt
 
 ## Implemented storage behavior
 
-Git recovery references preserve committed code. Monocode separately saves selected local configuration, such as `.env`, in the private application database before removing a checkout. Dependencies and build outputs are recreated by setup instead of being backed up.
+Git recovery references preserve committed code. Monocode separately saves selected local configuration, such as `.env`, in the private application database before removing a checkout. Recognized dependencies and build outputs are removed with a confirmed retirement and recreated by setup instead of being backed up. Standard Node, Rust and Tauri outputs are recognized from tracked project manifests without requiring a disposable-folder setting; unknown ignored data still needs explicit handling.
 
 - Identical configuration bytes are stored once. Immutable retirement manifests preserve paths, permissions and deliberately absent files independently of shared contents.
 - Legacy backups migrate transactionally and are verified against reconstructed files before their old storage is removed. Existing recoveries are retained even if their unique contents exceed the default budget.

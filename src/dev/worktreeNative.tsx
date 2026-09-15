@@ -158,7 +158,7 @@ function NativeWorktreeVerification() {
           log(
             `Review: ${review.entries.length} eligible, ${review.kept.length} kept`,
           );
-          if (review.entries.length) setPlan(review);
+          if (review.entries.length || review.kept.length) setPlan(review);
         },
         onReviewError: (error) => log(`Review error: ${String(error)}`),
       });
@@ -192,7 +192,7 @@ function NativeWorktreeVerification() {
               log(
                 `Review: ${review.entries.length} eligible, ${review.kept.length} kept`,
               );
-              if (review.entries.length) setPlan(review);
+              if (review.entries.length || review.kept.length) setPlan(review);
             })
           }
         >

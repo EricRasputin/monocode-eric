@@ -7,16 +7,30 @@ import {
 import { setSessionArchived } from "./sessionStore";
 import type { Session } from "./session";
 
-/** Reopening is a resume: keep it archived if restoration fails, and make the
- * stored conversation active before its temporary window lease can disappear. */
+export type SessionResumeResult =
+  | { session: Session; resumed: true }
+  | { session: Session; resumed: false; worktreeError: string };
+
+/** Saved history stays readable when checkout preparation fails. Keep its
+ * archive state in that case; preparing the next turn will retry restoration.
+ * Successful resumes stay active after the temporary window lease ends. */
 export async function resumeArchivedWorktreeSession(
   session: Session,
-): Promise<Session> {
-  if (session.worktreeCwd) await prepareSessionWorktree(session);
+): Promise<SessionResumeResult> {
+  if (session.worktreeCwd) {
+    try {
+      await prepareSessionWorktree(session);
+    } catch (error) {
+      return { session, resumed: false, worktreeError: String(error) };
+    }
+  }
   await setSessionArchived(session.id, false);
   // Recovery may have chosen another branch when the old name was reused.
   // Let Git supply the current branch instead of persisting an obsolete label.
-  return session.worktreeCwd ? { ...session, branch: undefined } : session;
+  return {
+    session: session.worktreeCwd ? { ...session, branch: undefined } : session,
+    resumed: true,
+  };
 }
 
 /** Archive is committed first. Review failures cannot undo it or turn a

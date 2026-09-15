@@ -1079,6 +1079,153 @@ fn changing_the_push_url_after_review_preserves_both_remote_destinations() {
 }
 
 #[test]
+fn fresh_review_can_delete_branches_after_checkout_only_retirement() {
+    let fixture = RetirementFixture::new();
+    let entry = fixture.create_remote_branch("session-fresh-review");
+    let first_plan = fixture.plan_ids(std::slice::from_ref(&entry.id));
+    let first = execute_retirement(
+        &fixture.conn,
+        &HashMap::new(),
+        &first_plan.plan_id,
+        &[selection(&entry, false, false)],
+    )
+    .unwrap();
+    assert_eq!(first.results[0].error, None);
+    assert!(first.results[0].worktree_removed);
+
+    let review = fixture.plan_ids(std::slice::from_ref(&entry.id));
+    assert_eq!(review.entries.len(), 1);
+    assert!(review.entries[0].worktree_removed);
+    let completed = execute_retirement(
+        &fixture.conn,
+        &HashMap::new(),
+        &review.plan_id,
+        &[selection(&entry, true, true)],
+    )
+    .unwrap();
+    assert_eq!(completed.results[0].error, None);
+    assert!(completed.results[0].local_branch_deleted);
+    assert!(completed.results[0].remote_branch_deleted);
+    assert_eq!(
+        latest_local_recovery(&fixture.conn, &entry.id)
+            .unwrap()
+            .unwrap()
+            .plan_id,
+        first_plan.plan_id
+    );
+}
+
+#[test]
+fn branch_only_review_cannot_cross_a_restore_and_second_retirement_at_the_same_commit() {
+    let fixture = RetirementFixture::new();
+    let entry = fixture.create("session-branch-review-stale");
+    let first = fixture.plan_ids(std::slice::from_ref(&entry.id));
+    let retired = execute_retirement(
+        &fixture.conn,
+        &HashMap::new(),
+        &first.plan_id,
+        &[selection(&entry, false, false)],
+    )
+    .unwrap();
+    assert_eq!(retired.results[0].error, None);
+    let stale = fixture.plan_ids(std::slice::from_ref(&entry.id));
+
+    open_owned(&fixture.conn, &entry).unwrap();
+    if let environment::BeginSetup::Run(operation) =
+        environment::begin_setup(&fixture.conn, &entry.path).unwrap()
+    {
+        let result = environment::run_setup(&operation, |_| {});
+        environment::finish_setup(&fixture.conn, &operation, &result).unwrap();
+        result.unwrap();
+    }
+    let second = fixture.plan_ids(std::slice::from_ref(&entry.id));
+    let retired = execute_retirement(
+        &fixture.conn,
+        &HashMap::new(),
+        &second.plan_id,
+        &[selection(&entry, false, false)],
+    )
+    .unwrap();
+    assert_eq!(retired.results[0].error, None);
+
+    let rejected = execute_retirement(
+        &fixture.conn,
+        &HashMap::new(),
+        &stale.plan_id,
+        &[selection(&entry, true, false)],
+    )
+    .unwrap();
+    assert!(rejected.results[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("different retirement"));
+    assert!(!rejected.results[0].local_branch_deleted);
+    assert_eq!(
+        latest_local_recovery(&fixture.conn, &entry.id)
+            .unwrap()
+            .unwrap()
+            .plan_id,
+        second.plan_id
+    );
+}
+
+#[test]
+fn last_archived_session_can_retire_recognized_build_folders_without_configuration() {
+    let fixture = RetirementFixture::new();
+    std::fs::write(
+        fixture.repo.join(".gitignore"),
+        "node_modules/\ndist/\ntarget/\nsrc-tauri/gen/\n",
+    )
+    .unwrap();
+    std::fs::write(fixture.repo.join("package.json"), "{}\n").unwrap();
+    std::fs::write(fixture.repo.join("Cargo.toml"), "[workspace]\n").unwrap();
+    std::fs::create_dir(fixture.repo.join("src-tauri")).unwrap();
+    std::fs::write(fixture.repo.join("src-tauri/Cargo.toml"), "[package]\n").unwrap();
+    std::fs::write(fixture.repo.join("src-tauri/tauri.conf.json"), "{}\n").unwrap();
+    git(&fixture.repo, &["add", "."]).unwrap();
+    git(&fixture.repo, &["commit", "-m", "Add project manifests"]).unwrap();
+    let entry = fixture.create("last-session-build-folders");
+    for dir in ["node_modules", "dist", "target", "src-tauri/gen/schemas"] {
+        let root = Path::new(&entry.path).join(dir);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("generated"), "build output").unwrap();
+    }
+    fixture
+        .conn
+        .execute(
+            "INSERT INTO sessions (id, cwd, worktree_cwd, archived) VALUES (?1, ?2, ?3, 1)",
+            params![entry.id, entry.repo, entry.path],
+        )
+        .unwrap();
+    let plan = build_retirement_plan(
+        &fixture.conn,
+        &HashMap::new(),
+        std::slice::from_ref(&entry.id),
+        None,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(plan.entries.len(), 1, "{:?}", plan.kept);
+    assert!(plan.kept.is_empty());
+    let report = execute_retirement(
+        &fixture.conn,
+        &HashMap::new(),
+        &plan.plan_id,
+        &[selection(&entry, false, false)],
+    )
+    .unwrap();
+    assert_eq!(report.results[0].error, None);
+    assert!(report.results[0].worktree_removed);
+    assert!(!Path::new(&entry.path).exists());
+    assert!(
+        ref_oid(&fixture.repo, &format!("refs/heads/{}", entry.branch))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
 fn rejected_remote_delete_is_retryable_from_the_same_plan() {
     let fixture = RetirementFixture::new();
     let entry = fixture.create_remote_branch("session-one");
