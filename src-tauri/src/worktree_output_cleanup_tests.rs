@@ -62,6 +62,22 @@ fn setup(f: &Fixture, entry: &Owned) -> Result<(), String> {
 }
 
 #[test]
+fn stored_checkout_path_and_canonical_root_share_the_same_containment_rules() {
+    let (mut f, entry) = fixture("output-containment");
+    // canonicalize adds the extended path prefix on Windows; entry.path keeps
+    // the ordinary, slash-normalized path used by the database and frontend.
+    f.host.root = std::fs::canonicalize(&f.host.root).unwrap();
+    assert!(plan(&f, &entry).blocked_reason.is_none());
+
+    f.host.root = PathBuf::from(&entry.path);
+    assert!(plan(&f, &entry).blocked_reason.unwrap().contains("outside"));
+
+    f.host.root = f.dir.join("owned-sibling");
+    std::fs::create_dir(&f.host.root).unwrap();
+    assert!(plan(&f, &entry).blocked_reason.unwrap().contains("outside"));
+}
+
+#[test]
 fn dirty_source_history_branches_unknown_files_and_selected_configuration_survive() {
     let (f, entry) = fixture("output-dirty");
     configure(
@@ -87,7 +103,7 @@ fn dirty_source_history_branches_unknown_files_and_selected_configuration_surviv
     let head = resolve_commit(Path::new(&entry.path), "HEAD").unwrap();
     let usage = storage::usage(&f.conn).unwrap();
     let plan = plan(&f, &entry);
-    assert!(plan.blocked_reason.is_none());
+    assert!(plan.blocked_reason.is_none(), "{:?}", plan.blocked_reason);
     assert_eq!(plan.candidates.len(), 2);
     let report = execute(&f, &plan, &["dist", "cache"]);
     assert_eq!(report.status, "complete");

@@ -23,6 +23,7 @@ mod reminders;
 mod search;
 mod session_store;
 mod skills;
+mod updater;
 mod window;
 mod window_transfer;
 #[cfg(windows)]
@@ -225,6 +226,7 @@ pub fn run() {
             menu::dispatch(app, event.id().as_ref());
         })
         .invoke_handler(tauri::generate_handler![
+            updater::check_for_update,
             control::control_enable,
             control::control_disable,
             control::control_reply,

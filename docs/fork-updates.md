@@ -12,6 +12,12 @@ verifies its signature, installs it, and restarts. Startup checks also show an
 available update in the sidebar. Failed checks or downloads do not count as a
 successful update.
 
+Update checks allow up to five seconds to establish a connection and fifteen
+seconds to retrieve the feed, including redirects. This lets the HTTP client
+move past an unreachable CDN address without waiting for the operating system's
+TCP timeout. A timed-out check reports an error and can be retried. Downloads
+keep the connection limit but have no fifteen-second total limit.
+
 The old `0.1.x` fork builds have no update endpoint or public key, so they need
 one initial replacement with a `0.2.x` or newer build. Quit the old app first. If both
 `~/Applications/MonoCode Fork.app` and `/Applications/MonoCode Fork.app` exist,
@@ -79,8 +85,10 @@ check CI. Selecting another branch never publishes, even with the option enabled
   the fork config overrides the app version. Release notes retain the upstream
   version as provenance rather than using it as the fork's version.
 - Both `darwin-aarch64` and `darwin-x86_64` packages must finish successfully.
-- Packaging adds a changelog section for the fork version from changes on main
-  since the previous fork release, so the post-update **What's new** view works.
+- Packaging adds a changelog section for the fork version from all fork commits
+  since the previous fork release, including commits brought in through merges.
+  The post-update **What's new** view and GitHub release notes list these changes.
+  Upstream changes stay in the bundled upstream changelog.
   This generated section is bundled in the app without committing version bumps.
 - The workflow checks bundle identity, version, architecture, and code signature.
   It stages a DMG, signed `.app.tar.gz`, and signature for each architecture.

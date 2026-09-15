@@ -14,6 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   forkChangelogSection,
+  forkCommitMessages,
   manifest,
   nextForkVersion,
   readUpstreamRelease,
@@ -39,6 +40,37 @@ test("bundled notes use the fork version and human-readable merge titles", () =>
   assert.match(section, /upstream MonoCode 0\.1\.46/);
   assert.ok(!section.includes("Merge pull request"));
   assert.match(section, /releases\/tag\/fork-v1\.0\.7/);
+});
+
+test("release notes include local commits behind merges and exclude prior releases and upstream", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "fork-history-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  git("init", "-b", "main");
+  git("config", "user.name", "Release test");
+  git("config", "user.email", "release-test@example.com");
+  git("commit", "--allow-empty", "-m", "Upstream base");
+  git("branch", "upstream");
+  git("commit", "--allow-empty", "-m", "Previously released fork change");
+  git("tag", "fork-v0.2.12");
+  git("switch", "-c", "local-work");
+  git("commit", "--allow-empty", "-m", "Add checkout capacity");
+  git("commit", "--allow-empty", "-m", "Add reviewed output cleanup");
+  git("switch", "upstream");
+  git("commit", "--allow-empty", "-m", "Upstream release change");
+  const upstreamCommit = git("rev-parse", "HEAD");
+  git("switch", "local-work");
+  git("merge", "upstream", "--no-ff", "-m", "Merge new upstream release");
+  git("switch", "main");
+  git("merge", "local-work", "--no-ff", "-m", "Merge all fork changes");
+  git("commit", "--allow-empty", "-m", "Bound update check connections");
+
+  const messages = forkCommitMessages("fork-v0.2.12", upstreamCommit, dir);
+  assert.deepEqual(messages.sort(), [
+    "Add checkout capacity",
+    "Add reviewed output cleanup",
+    "Bound update check connections",
+  ]);
 });
 
 function fixture(t) {

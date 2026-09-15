@@ -21,7 +21,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   message: mocks.message,
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: mocks.relaunch }));
-vi.mock("@tauri-apps/plugin-updater", () => ({ check: mocks.check }));
+vi.mock("./updateCheck", () => ({ checkForUpdate: mocks.check }));
 vi.mock("./sounds", () => ({ announceUpdateAvailable: mocks.announce }));
 vi.mock("./updateNotice", () => ({ rememberInstalledUpdate: mocks.remember }));
 
