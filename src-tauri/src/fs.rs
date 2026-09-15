@@ -852,6 +852,7 @@ pub struct GitHubWorkItem {
     pub title: String,
     pub url: String,
     pub state: String,
+    pub created_at: String,
     pub updated_at: String,
     pub labels: Vec<GitHubLabel>,
     pub assignees: Vec<GitHubAssignee>,
@@ -2098,9 +2099,9 @@ fn git_github_work_items_for(
     };
     let limit = limit.clamp(1, 100).to_string();
     let fields = if kind == "pr" {
-        "number,title,url,state,updatedAt,labels,assignees,isDraft"
+        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft"
     } else {
-        "number,title,url,state,updatedAt,labels,assignees"
+        "number,title,url,state,createdAt,updatedAt,labels,assignees"
     };
     let mut args = vec![
         kind.to_string(),
@@ -2145,9 +2146,9 @@ fn git_github_work_item_for(
     let repo = format!("{owner}/{name}");
     let number = number.to_string();
     let fields = if kind == "pr" {
-        "number,title,url,state,updatedAt,labels,assignees,isDraft"
+        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft"
     } else {
-        "number,title,url,state,updatedAt,labels,assignees"
+        "number,title,url,state,createdAt,updatedAt,labels,assignees"
     };
     let json = gh_checked(
         root,
@@ -3160,6 +3161,8 @@ fn parse_github_work_items(
         url: String,
         state: String,
         #[serde(default)]
+        created_at: String,
+        #[serde(default)]
         updated_at: String,
         #[serde(default)]
         labels: Vec<RowLabel>,
@@ -3177,6 +3180,7 @@ fn parse_github_work_items(
             title: row.title,
             url: row.url,
             state: row.state.to_lowercase(),
+            created_at: row.created_at,
             updated_at: row.updated_at,
             labels: row
                 .labels
@@ -5984,6 +5988,7 @@ mod tests {
             "title": "Promo codes fail to apply",
             "url": "https://github.com/acme/web/issues/5138",
             "state": "OPEN",
+            "createdAt": "2026-08-20T09:00:00Z",
             "updatedAt": "2026-08-27T08:00:00Z",
             "labels": [{"name": "bug", "color": "d73a4a"}],
             "assignees": [{"login": "maya"}]
@@ -6001,6 +6006,9 @@ mod tests {
             "https://avatars.githubusercontent.com/maya?s=64"
         );
         assert!(!items[0].draft);
+        let payload = serde_json::to_value(&items[0]).unwrap();
+        assert_eq!(payload["createdAt"], "2026-08-20T09:00:00Z");
+        assert_eq!(payload["updatedAt"], "2026-08-27T08:00:00Z");
     }
 
     #[test]
@@ -6017,6 +6025,26 @@ mod tests {
         assert!(items[0].draft);
         assert!(items[0].labels.is_empty());
         assert_eq!(items[0].repo, "acme/web");
+    }
+
+    #[test]
+    fn github_work_item_creation_time_reaches_frontend() {
+        for (kind, resource) in [("pr", "pull"), ("issue", "issues")] {
+            let json = r#"{
+            "number": 12,
+            "title": "Checkout",
+            "url": "https://github.com/acme/web/pull/12",
+            "state": "OPEN",
+            "createdAt": "2026-09-01T08:00:00Z",
+            "updatedAt": "2026-09-11T08:00:00Z"
+        }"#;
+            let json = json.replace("/pull/", &format!("/{resource}/"));
+            let item = parse_github_work_item(&json, kind, "acme/web").unwrap();
+            let payload = serde_json::to_value(item).unwrap();
+            assert_eq!(payload["kind"], kind);
+            assert_eq!(payload["createdAt"], "2026-09-01T08:00:00Z");
+            assert_eq!(payload["updatedAt"], "2026-09-11T08:00:00Z");
+        }
     }
 
     #[test]

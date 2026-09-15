@@ -29,6 +29,7 @@ import {
   type Block,
   type HarnessId,
   type LinkedWorkItem,
+  type ModelTarget,
   type PlanBuildTarget,
   type RuntimeMode,
   type Session,
@@ -73,7 +74,7 @@ type Shared = {
     text: string,
     attachments: Attachment[],
     options?: ComposerTurnOptions,
-  ) => void;
+  ) => boolean | void;
   onStop: (sessionId: string) => void;
   onCompactContext: (sessionId: string) => boolean;
   onPlaceSessionInFolder: (
@@ -122,16 +123,10 @@ type Shared = {
   ) => void;
   onSecondOpinion?: (
     sessionId: string,
-    harness: HarnessId,
+    target: ModelTarget,
     turn: Block[],
-    model: string,
   ) => void;
-  onHandoff?: (
-    sessionId: string,
-    harness: HarnessId,
-    turn: Block[],
-    model: string,
-  ) => void;
+  onHandoff?: (sessionId: string, target: ModelTarget, turn: Block[]) => void;
   onMovePane: (fromId: string, toId: string, edge: PaneEdge) => void;
   onNewTerminal: (sessionId: string) => void;
   onTerminalMetaChange?: (fileId: string, patch: TerminalMetaPatch) => void;

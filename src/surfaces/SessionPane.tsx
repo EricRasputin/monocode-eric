@@ -30,6 +30,7 @@ import {
   type Block,
   type HarnessId,
   type LinkedWorkItem,
+  type ModelTarget,
   type PlanBuildTarget,
   type RuntimeMode,
   type Session,
@@ -90,7 +91,7 @@ type Props = {
     text: string,
     attachments: Attachment[],
     options?: ComposerTurnOptions,
-  ) => void;
+  ) => boolean | void;
   onStop: (sessionId: string) => void;
   onCompactContext: (sessionId: string) => boolean;
   onPlaceSessionInFolder: (
@@ -137,16 +138,10 @@ type Props = {
   ) => void;
   onSecondOpinion?: (
     sessionId: string,
-    harness: HarnessId,
+    target: ModelTarget,
     turn: Block[],
-    model: string,
   ) => void;
-  onHandoff?: (
-    sessionId: string,
-    harness: HarnessId,
-    turn: Block[],
-    model: string,
-  ) => void;
+  onHandoff?: (sessionId: string, target: ModelTarget, turn: Block[]) => void;
   onNewTerminal: (sessionId: string) => void;
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 };
@@ -565,6 +560,7 @@ export const SessionPane = memo(function SessionPane({
                 cwd={workCwd}
                 harness={session.harness}
                 model={session.model}
+                modelSettings={session.modelSettings}
                 pendingQuestion={!!session.pendingQuestion}
                 onApproval={approve}
                 onAddToChat={addSelectionToChat}
@@ -578,14 +574,13 @@ export const SessionPane = memo(function SessionPane({
                 onBuildPlan={buildPlan}
                 onSecondOpinion={
                   !session.inboxAsk && onSecondOpinion
-                    ? (harness, turn, model) =>
-                        onSecondOpinion(session.id, harness, turn, model)
+                    ? (target, turn) =>
+                        onSecondOpinion(session.id, target, turn)
                     : undefined
                 }
                 onHandoff={
                   !session.inboxAsk && onHandoff
-                    ? (harness, turn, model) =>
-                        onHandoff(session.id, harness, turn, model)
+                    ? (target, turn) => onHandoff(session.id, target, turn)
                     : undefined
                 }
                 onJumpToBottomChange={setShowJumpToBottom}
