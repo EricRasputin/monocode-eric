@@ -266,13 +266,15 @@ export function stage(version, target, root = process.cwd()) {
   });
 }
 
-export function manifest(version, sha, notes, directory = "release-artifacts") {
+export function manifest(version, sha, directory = "release-artifacts") {
   const tag = releaseTag(version);
   const upstream = readUpstreamRelease();
   const update = {
     version,
     upstream,
-    notes,
+    // Match upstream's one-line feed notes. Native update dialogs do not scroll;
+    // full notes remain in the GitHub release and bundled changelog.
+    notes: `MonoCode Fork ${version}`,
     pub_date: new Date().toISOString(),
     platforms: {},
   };
@@ -439,7 +441,7 @@ function publish(version) {
   const title = `MonoCode Fork ${version} (${upstream.version})`;
   const changes = forkChangeList(forkCommitMessages(previous?.tag_name, upstream.commit));
   const notes = `${title}.\n\nBased on [upstream MonoCode ${upstream.version}](https://github.com/${upstream.repository}/releases/tag/${upstream.tag}), commit \`${upstream.commit}\`.\n\n## Fork changes\n\n${changes}\n\n${generated}`;
-  const assets = manifest(version, sha, notes);
+  const assets = manifest(version, sha);
   const notesFile = "release-artifacts/release-notes.md";
   writeFileSync(notesFile, `${notes}\n`);
   const draft = releases.find((release) => release.tag_name === tag);

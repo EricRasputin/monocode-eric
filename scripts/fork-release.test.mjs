@@ -108,17 +108,12 @@ function fixture(t) {
 
 test("publishes a complete feed with immutable URLs and architecture-specific signatures", (t) => {
   const { dir } = fixture(t);
-  const assets = manifest(
-    "1.0.7",
-    "commit-7",
-    "New worktree improvements",
-    dir,
-  );
+  const assets = manifest("1.0.7", "commit-7", dir);
   const feed = JSON.parse(readFileSync(join(dir, "latest.json")));
   assert.equal(assets.length, 8);
   assert.equal(feed.version, "1.0.7");
   assert.deepEqual(feed.upstream, upstream);
-  assert.equal(feed.notes, "New worktree improvements");
+  assert.equal(feed.notes, "MonoCode Fork 1.0.7");
   assert.deepEqual(Object.keys(feed.platforms), [
     "darwin-aarch64",
     "darwin-x86_64",
@@ -132,21 +127,36 @@ test("publishes a complete feed with immutable URLs and architecture-specific si
   }
 });
 
+test("keeps updater feed notes compact so old clients can reach the install button", (t) => {
+  const { dir } = fixture(t);
+  const messages = Array.from({ length: 200 }, (_, i) => `Local change ${i}`);
+  const fullNotes = forkChangelogSection(
+    "1.0.7", messages, upstream.version, "2026-09-15",
+  );
+  for (const message of messages) assert.ok(fullNotes.includes(`- ${message}\n`));
+  assert.ok(fullNotes.length > 3_000);
+  manifest("1.0.7", "commit-7", dir);
+  const feed = JSON.parse(readFileSync(join(dir, "latest.json")));
+  assert.ok(feed.notes.length < 200);
+  assert.ok(feed.notes.split("\n").length <= 3);
+  assert.equal(feed.notes, "MonoCode Fork 1.0.7");
+});
+
 test("does not produce an update feed if either architecture is missing", (t) => {
   const { dir } = fixture(t);
   rmSync(join(dir, "darwin-x86_64.json"));
-  assert.throws(() => manifest("1.0.7", "commit-7", "", dir), /ENOENT/);
+  assert.throws(() => manifest("1.0.7", "commit-7", dir), /ENOENT/);
   assert.throws(() => readFileSync(join(dir, "latest.json")), /ENOENT/);
 });
 
 test("rejects mixed commits and versions", (t) => {
   const { dir } = fixture(t);
   assert.throws(
-    () => manifest("1.0.7", "commit-8", "", dir),
+    () => manifest("1.0.7", "commit-8", dir),
     /Mismatched release metadata/,
   );
   assert.throws(
-    () => manifest("1.0.8", "commit-7", "", dir),
+    () => manifest("1.0.8", "commit-7", dir),
     /Mismatched release metadata/,
   );
 });
@@ -159,7 +169,7 @@ test("rejects packages that disagree about the upstream release base", (t) => {
     JSON.stringify(metadata["darwin-x86_64"]),
   );
   assert.throws(
-    () => manifest("1.0.7", "commit-7", "", dir),
+    () => manifest("1.0.7", "commit-7", dir),
     /Mismatched upstream release metadata/,
   );
 });
@@ -200,12 +210,12 @@ test("rejects a changed bundle or signature after staging", (t) => {
   const arm = metadata["darwin-aarch64"];
   writeFileSync(join(dir, arm.archive), "corrupted download");
   assert.throws(
-    () => manifest("1.0.7", "commit-7", "", dir),
+    () => manifest("1.0.7", "commit-7", dir),
     /Damaged release asset/,
   );
   writeFileSync(join(dir, `${arm.archive}.sig`), "different signature");
   assert.throws(
-    () => manifest("1.0.7", "commit-7", "", dir),
+    () => manifest("1.0.7", "commit-7", dir),
     /Mismatched updater signature/,
   );
 });
