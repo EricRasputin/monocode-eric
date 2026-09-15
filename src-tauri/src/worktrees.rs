@@ -299,6 +299,9 @@ struct RetirementSnapshot {
     base_oid: String,
     recovery_ref: String,
     checkout_present: bool,
+    // A later branch-only review must stay bound to the removal it observed.
+    // It cannot replace that removal's code/configuration recovery identity.
+    removal_plan_id: Option<String>,
     local_allowed: bool,
     local_reason: Option<String>,
     remote: Option<String>,
@@ -428,6 +431,18 @@ pub(crate) fn schema(conn: &Connection) -> rusqlite::Result<()> {
     ensure_managed_column(conn, "creation_oid", "TEXT")?;
     ensure_managed_column(conn, "active_retirement_plan_id", "TEXT")?;
     ensure_managed_column(conn, "pending_retirement_plan_id", "TEXT")?;
+    let has_removal_plan: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('worktree_retirement_items')
+          WHERE name = 'removal_plan_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_removal_plan {
+        conn.execute(
+            "ALTER TABLE worktree_retirement_items ADD COLUMN removal_plan_id TEXT",
+            [],
+        )?;
+    }
     environment::schema(conn)?;
     // Older databases selected recovery rows by mutable insertion/update time.
     // Freeze the newest reviewed removal with its recovery and, for
@@ -1295,7 +1310,7 @@ fn review_retirement(
         return Err("Primary checkout".into());
     }
     let registered = all.iter().find(|checkout| checkout.path == entry.path);
-    let (commit_oid, checkout_present) = if let Some(checkout) = registered {
+    let (commit_oid, checkout_present, prior_recovery) = if let Some(checkout) = registered {
         if checkout.locked || checkout.prunable {
             return Err("Git worktree is locked or prunable".into());
         }
@@ -1320,7 +1335,7 @@ fn review_retirement(
         if branch_oid != head {
             return Err("Owned branch moved away from the checkout HEAD".into());
         }
-        (head, true)
+        (head, true, None)
     } else {
         if Path::new(&entry.path).exists() {
             return Err("Worktree path is occupied but not registered with Git".into());
@@ -1334,13 +1349,13 @@ fn review_retirement(
             {
                 return Err("Recorded recovery ref is missing or changed".into());
             }
-            (recovery.commit_oid, false)
+            (recovery.commit_oid.clone(), false, Some(recovery))
         } else if let Some(commit) = ref_oid(
             Path::new(&entry.repo),
             &format!("refs/heads/{}", entry.branch),
         )? {
             // Legacy cleanup preserved the branch but predated recovery rows.
-            (commit, false)
+            (commit, false, None)
         } else {
             return Err("Checkout is missing and has no durable recovery ref".into());
         }
@@ -1427,8 +1442,12 @@ fn review_retirement(
         base_ref: entry.base_ref.clone(),
         commit_oid,
         base_oid,
-        recovery_ref: retirement_ref(plan_id, &entry.id, "local"),
+        recovery_ref: prior_recovery
+            .as_ref()
+            .map(|recovery| recovery.recovery_ref.clone())
+            .unwrap_or_else(|| retirement_ref(plan_id, &entry.id, "local")),
         checkout_present,
+        removal_plan_id: prior_recovery.map(|recovery| recovery.plan_id),
         local_allowed,
         local_reason,
         remote: remote_name,
@@ -1494,10 +1513,10 @@ fn persist_retirement_plan(
                local_allowed, local_reason, remote_name, remote_branch,
                remote_destination, remote_fingerprint, remote_allowed, remote_reason,
                remote_expected_oid, worktree_removed, local_deleted,
-               remote_deleted, updated_at
+               remote_deleted, updated_at, removal_plan_id
              ) VALUES (
                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-               ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+               ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
              )",
             params![
                 snapshot.plan_id,
@@ -1524,6 +1543,7 @@ fn persist_retirement_plan(
                 snapshot.local_deleted,
                 snapshot.remote_deleted,
                 now(),
+                snapshot.removal_plan_id,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1542,7 +1562,7 @@ fn load_retirement_snapshot(
                 local_allowed, local_reason, remote_name, remote_branch,
                 remote_destination, remote_fingerprint, remote_allowed, remote_reason,
                 remote_expected_oid, worktree_removed, local_deleted,
-                remote_deleted, local_requested, remote_requested
+                remote_deleted, local_requested, remote_requested, removal_plan_id
            FROM worktree_retirement_items
           WHERE plan_id = ?1 AND worktree_id = ?2",
         params![plan_id, worktree_id],
@@ -1573,6 +1593,7 @@ fn load_retirement_snapshot(
                 remote_deleted: row.get(22)?,
                 local_requested: row.get(23)?,
                 remote_requested: row.get(24)?,
+                removal_plan_id: row.get(25)?,
             })
         },
     )
@@ -2125,6 +2146,18 @@ fn ensure_recovery_record(
 }
 
 fn ensure_local_recovery(conn: &Connection, snapshot: &RetirementSnapshot) -> Result<(), String> {
+    if let Some(removal_plan_id) = &snapshot.removal_plan_id {
+        let recovery = local_recovery_for_plan(conn, &snapshot.id, removal_plan_id)?
+            .ok_or("The original retirement recovery record is missing")?;
+        if recovery.commit_oid != snapshot.commit_oid
+            || recovery.recovery_ref != snapshot.recovery_ref
+            || direct_ref_oid(Path::new(&snapshot.repo), &recovery.recovery_ref)?.as_deref()
+                != Some(&snapshot.commit_oid)
+        {
+            return Err("The original retirement recovery ref is missing or changed".into());
+        }
+        return Ok(());
+    }
     journal_step(conn, snapshot, "recovery_ref", "pending", None)?;
     match ensure_recovery_record(
         conn,
@@ -2239,7 +2272,13 @@ fn recheck_checkout(conn: &Connection, snapshot: &RetirementSnapshot) -> Result<
             let entry = current_owned_for_snapshot(conn, snapshot)?;
             if !entry.removed
                 || entry.pending_retirement_plan_id.is_some()
-                || entry.active_retirement_plan_id.as_deref() != Some(&snapshot.plan_id)
+                || entry.active_retirement_plan_id.as_deref()
+                    != Some(
+                        snapshot
+                            .removal_plan_id
+                            .as_deref()
+                            .unwrap_or(&snapshot.plan_id),
+                    )
             {
                 return Err("A different retirement owns the removed worktree".into());
             }
@@ -2298,9 +2337,9 @@ fn retirement_failure(
             if matches!(remote_oid(Path::new(&snapshot.repo), &target, branch), Ok(None))
     );
     let worktree_absent = actual_worktree_removed(snapshot);
-    if worktree_absent {
+    if worktree_absent && snapshot.removal_plan_id.is_none() {
         let _ = complete_worktree_removal(conn, snapshot);
-    } else if step == "worktree" {
+    } else if !worktree_absent && step == "worktree" {
         let _ = clear_pending_removal(conn, snapshot);
     }
     if local_was_requested && local_absent {

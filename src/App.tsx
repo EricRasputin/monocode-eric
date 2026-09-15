@@ -1,4 +1,5 @@
 import { refreshWorktrees } from "./hooks/useWorktrees";
+import { useArchiveRetirementReview } from "./hooks/useArchiveRetirementReview";
 import type { WorkspaceChoice } from "./lib/session";
 import {
   canChooseWorkspace,
@@ -6,7 +7,6 @@ import {
   prepareSessionWorktree,
   protectedWorktreePaths,
   shouldIsolateSession,
-  type WorktreeRetirementPlan,
 } from "./lib/worktrees";
 import {
   initialMessageContext,
@@ -732,9 +732,11 @@ export default function App({
     () => true,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [archiveRetirementPlans, setArchiveRetirementPlans] = useState<
-    WorktreeRetirementPlan[]
-  >([]);
+  const {
+    plans: archiveRetirementPlans,
+    review: reviewArchiveRetirement,
+    close: closeArchiveRetirement,
+  } = useArchiveRetirementReview();
   const [updateNotice, setUpdateNotice] = useState(installedUpdate);
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] =
@@ -3822,23 +3824,7 @@ export default function App({
             tabsRef.current,
             projectTerminalsRef.current,
           ),
-        onReview: (plan) => {
-          if (plan.entries.length > 0) {
-            setArchiveRetirementPlans((current) => [...current, plan]);
-          } else if (plan.kept.length > 0) {
-            toast(
-              sessionIds.length === 1
-                ? "Session archived"
-                : "Sessions archived",
-              {
-                description:
-                  plan.kept.length === 1
-                    ? `Worktree kept: ${plan.kept[0].reason}`
-                    : `${plan.kept.length} worktrees kept. Review them in Settings → Worktrees.`,
-              },
-            );
-          }
-        },
+        onReview: reviewArchiveRetirement,
         onReviewError: () => {
           toast(
             sessionIds.length === 1 ? "Session archived" : "Sessions archived",
@@ -3849,7 +3835,7 @@ export default function App({
           );
         },
       }),
-    [onRemoveHistorySession],
+    [onRemoveHistorySession, reviewArchiveRetirement],
   );
 
   const onArchiveHistorySession = useCallback(
@@ -7476,9 +7462,7 @@ export default function App({
               key={archiveRetirementPlans[0].planId}
               plan={archiveRetirementPlans[0]}
               source="archive"
-              onClose={() =>
-                setArchiveRetirementPlans((current) => current.slice(1))
-              }
+              onClose={closeArchiveRetirement}
               onRetired={() => {
                 for (const repo of new Set(
                   archiveRetirementPlans[0].entries.map((entry) => entry.repo),

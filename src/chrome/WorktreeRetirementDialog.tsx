@@ -202,13 +202,18 @@ export function WorktreeRetirementDialog({
       className="max-h-[80vh]"
     >
       <div ref={contentRef} className="space-y-4 px-4 pb-4 pt-3">
-        {!report ? (
+        {!report && actionable.length === 0 ? (
+          <p className="text-[12px] leading-relaxed text-content/55">
+            The worktree is kept for the reasons below. You can review it again
+            in Settings → Worktrees after resolving them.
+          </p>
+        ) : !report ? (
           <p className="text-[12px] leading-relaxed text-content/55">
             {alreadyRemovedCount === actionable.length && actionable.length > 0
               ? "The working folder is already removed."
               : alreadyRemovedCount > 0
-                ? "Working folders marked below are already removed. The other working folders and their approved generated folders will be removed."
-                : "The working folder and approved generated folders will be removed."}{" "}
+                ? "Working folders marked below are already removed. The other working folders, including generated files and installed dependencies, will be removed."
+                : "The working folder, including generated files and installed dependencies, will be removed."}{" "}
             Monocode preserves your committed code and configured local files so
             this conversation can be restored. Branches stay unless you select
             them below.
@@ -311,7 +316,7 @@ export function WorktreeRetirementDialog({
                 disabled={busy}
                 onClick={onClose}
               >
-                Keep for now
+                {reviewedCount === 0 ? "Done" : "Keep for now"}
               </button>
               {actionable.length > 0 ? (
                 <button

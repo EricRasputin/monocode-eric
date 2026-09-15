@@ -152,6 +152,147 @@ impl Drop for EnvironmentFixture {
     }
 }
 
+fn automatic_output_fixture() -> EnvironmentFixture {
+    let fixture = EnvironmentFixture::new();
+    for directory in ["", "apps/web", "apps/api"] {
+        std::fs::write(fixture.repo.join(directory).join("package.json"), "{}\n").unwrap();
+    }
+    git(&fixture.repo, &["add", "."]).unwrap();
+    git(
+        &fixture.repo,
+        &["commit", "-m", "Add Node project manifests"],
+    )
+    .unwrap();
+    let scope = environment::scope_for_cwd(&path_to_js(&fixture.repo)).unwrap();
+    let mut settings = environment::load_settings(&fixture.conn, &scope).unwrap();
+    settings.disposable_paths.clear();
+    environment::save_settings(&fixture.conn, &scope, &settings).unwrap();
+    fixture
+}
+
+#[test]
+fn automatic_outputs_preserve_configured_files_and_cover_nested_projects() {
+    let fixture = automatic_output_fixture();
+    // An explicitly copied file within an automatic output still has to be
+    // archived. Automatic disposal never becomes a conflicting saved policy.
+    std::fs::create_dir(fixture.repo.join("dist")).unwrap();
+    std::fs::write(fixture.repo.join("dist/local.json"), "initial local data\n").unwrap();
+    let scope = environment::scope_for_cwd(&path_to_js(&fixture.repo)).unwrap();
+    let mut settings = environment::load_settings(&fixture.conn, &scope).unwrap();
+    settings.copy_paths.push("dist/local.json".into());
+    environment::save_settings(&fixture.conn, &scope, &settings).unwrap();
+
+    let entry = fixture.create();
+    fixture.setup(&entry).unwrap();
+    let root = Path::new(&entry.path);
+    for directory in ["apps/web/node_modules", "apps/web/dist", "apps/api/dist"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+        std::fs::write(root.join(directory).join("generated"), "build output").unwrap();
+    }
+    std::fs::write(root.join(".env"), "last worktree configuration\n").unwrap();
+    std::fs::write(root.join("dist/local.json"), "last local data\n").unwrap();
+    let plan = fixture.plan(&entry);
+    assert_eq!(plan.entries.len(), 1, "{:?}", plan.kept);
+    assert_eq!(fixture.retire(&plan, &entry).results[0].error, None);
+    assert!(!root.exists());
+    assert!(environment::load_settings(&fixture.conn, &scope)
+        .unwrap()
+        .disposable_paths
+        .is_empty());
+
+    open_owned(&fixture.conn, &entry).unwrap();
+    fixture.setup(&entry).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join(".env")).unwrap(),
+        "last worktree configuration\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("dist/local.json")).unwrap(),
+        "last local data\n"
+    );
+    assert!(!root.join("apps/web/node_modules").exists());
+    assert!(!root.join("apps/api/dist").exists());
+}
+
+#[test]
+fn automatic_outputs_do_not_hide_local_data_or_changes_added_after_review() {
+    let fixture = automatic_output_fixture();
+    let entry = fixture.create();
+    fixture.setup(&entry).unwrap();
+    let root = Path::new(&entry.path);
+    let plan = fixture.plan(&entry);
+    assert_eq!(plan.entries.len(), 1, "{:?}", plan.kept);
+
+    for path in [
+        ".env.local",
+        "local.sqlite",
+        "notes.txt",
+        "code.txt",
+        "apps/api/local.sqlite",
+    ] {
+        std::fs::write(root.join(path), "local data to keep\n").unwrap();
+        let report = fixture.retire(&plan, &entry);
+        assert!(!report.results[0].worktree_removed);
+        assert!(report.results[0].error.as_deref().unwrap().contains(path));
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).unwrap(),
+            "local data to keep\n"
+        );
+        if path == "code.txt" {
+            std::fs::write(root.join(path), "original\n").unwrap();
+        } else {
+            std::fs::remove_file(root.join(path)).unwrap();
+        }
+    }
+    assert_eq!(fixture.retire(&plan, &entry).results[0].error, None);
+    assert!(!root.exists());
+}
+
+#[test]
+fn branch_cleanup_after_restart_preserves_the_original_configuration_recovery() {
+    let fixture = EnvironmentFixture::new();
+    let entry = fixture.create();
+    fixture.setup(&entry).unwrap();
+    std::fs::write(
+        Path::new(&entry.path).join(".env"),
+        "retired configuration\n",
+    )
+    .unwrap();
+    let first = fixture.plan(&entry);
+    assert_eq!(fixture.retire(&first, &entry).results[0].error, None);
+    std::fs::write(fixture.repo.join(".env"), "new primary configuration\n").unwrap();
+
+    let review = fixture.plan(&entry);
+    let restarted = Connection::open(fixture.dir.join("state.sqlite")).unwrap();
+    schema(&restarted).unwrap();
+    let completed = execute_retirement(
+        &restarted,
+        &HashMap::new(),
+        &review.plan_id,
+        &[WorktreeRetirementSelection {
+            id: entry.id.clone(),
+            delete_local_branch: true,
+            delete_remote_branch: false,
+        }],
+    )
+    .unwrap();
+    assert_eq!(completed.results[0].error, None);
+    assert!(completed.results[0].local_branch_deleted);
+    assert_eq!(
+        latest_local_recovery(&restarted, &entry.id)
+            .unwrap()
+            .unwrap()
+            .plan_id,
+        first.plan_id
+    );
+    open_owned(&restarted, &entry).unwrap();
+    fixture.setup(&entry).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&entry.path).join(".env")).unwrap(),
+        "retired configuration\n"
+    );
+}
+
 #[test]
 fn unmerged_checkout_roundtrip_restores_last_local_config_and_rebuilds_generated_files() {
     let fixture = EnvironmentFixture::new();

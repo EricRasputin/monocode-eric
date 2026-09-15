@@ -490,13 +490,8 @@ function Preview() {
       },
       protectedPaths: () => [],
       onReview: (plan) => {
-        if (plan.entries.length) {
+        if (plan.entries.length || plan.kept.length) {
           setReviewPlan(plan);
-        } else if (plan.kept.length) {
-          setNotice(`Archived. Worktree kept: ${plan.kept[0].reason}.`);
-          toast("Session archived", {
-            description: `Worktree kept: ${plan.kept[0].reason}`,
-          });
         } else {
           setNotice(
             "Archived. The shared worktree is still in use, so there is nothing to review.",

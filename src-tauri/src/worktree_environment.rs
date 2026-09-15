@@ -1,8 +1,10 @@
 //! Per-project worktree setup and local-only file preservation.
 //!
 //! The project policy is deliberately narrow: copied paths are literal ignored
-//! files and disposable paths are literal ignored directories. Archives live in
-//! the private application database and are immutable for a retirement review.
+//! files and disposable paths are literal ignored directories. Known generated
+//! directories are also disposable when a tracked project manifest identifies
+//! them. Archives live in the private application database and are immutable
+//! for a retirement review.
 
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -478,7 +480,7 @@ fn settings_at_checkout_root(
 }
 
 /// Return an actionable reason when anything in the checkout falls outside
-/// the saved copy/disposable policy.
+/// the saved copy policy and explicit or recognized disposable directories.
 pub(super) fn check_cleanup(conn: &Connection, entry: &Owned) -> Result<Option<String>, String> {
     let setup: Option<(String, String, bool, Option<u32>)> = conn
         .query_row(
@@ -965,12 +967,76 @@ fn paths_overlap(first: &str, second: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// Recognize outputs beside tracked project manifests, including nested
+/// projects, without walking dependency/build trees. A folder name alone is
+/// not evidence that its contents are generated. Require an ignored, real
+/// directory with no tracked files and no symlink ancestors as well.
+fn automatic_disposable_paths(root: &Path) -> Result<Vec<String>, String> {
+    let raw = super::git(
+        root,
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--",
+            ":(glob)**/package.json",
+            ":(glob)**/Cargo.toml",
+            ":(glob)**/tauri.conf.json",
+            ":(glob)**/tauri.conf.json5",
+            ":(glob)**/Tauri.toml",
+        ],
+    )?;
+    let manifests: HashSet<&str> = raw.split_terminator('\0').collect();
+    let mut candidates = HashSet::new();
+    for manifest in &manifests {
+        let (directory, name) = manifest.rsplit_once('/').unwrap_or(("", manifest));
+        let relative = |path: &str| {
+            if directory.is_empty() {
+                path.to_string()
+            } else {
+                format!("{directory}/{path}")
+            }
+        };
+        let outputs: &[&str] = match name {
+            "package.json" => &["node_modules", "dist"],
+            "Cargo.toml" => &["target"],
+            "tauri.conf.json" | "tauri.conf.json5" | "Tauri.toml"
+                if manifests.contains(relative("Cargo.toml").as_str()) =>
+            {
+                &["gen/schemas"]
+            }
+            _ => continue,
+        };
+        if !matches!(safe_metadata(root, manifest)?, Some(metadata) if metadata.is_file()) {
+            continue;
+        }
+        for output in outputs {
+            candidates.insert(relative(output));
+        }
+    }
+    let mut disposable = Vec::new();
+    for path in candidates {
+        if matches!(safe_metadata(root, &path)?, Some(metadata) if metadata.is_dir())
+            && validate_git_policy(root, &path, true).is_ok()
+        {
+            disposable.push(path);
+        }
+    }
+    disposable.sort();
+    Ok(disposable)
+}
+
 fn check_cleanup_with_settings(
     root: &Path,
     settings: &EnvironmentSettings,
 ) -> Result<Option<String>, String> {
-    let settings = normalize_settings(settings.clone())?;
+    let mut settings = normalize_settings(settings.clone())?;
     validate_policy_paths(root, &settings)?;
+    // These are derived at every review/removal check, not saved as user
+    // settings. Copy paths within a recognized output still get archived.
+    settings
+        .disposable_paths
+        .extend(automatic_disposable_paths(root)?);
     let output = super::git_output(
         root,
         &[
@@ -1036,7 +1102,7 @@ fn check_cleanup_with_settings(
         detail.push_str(&format!(", and {extra} more"));
     }
     Ok(Some(format!(
-        "Local files need attention: {detail}. Commit code changes, remove unknown files, or explicitly add ignored config files to Copy paths and ignored generated directories to Disposable paths."
+        "Local files need attention: {detail}. Commit code changes, remove unknown files, or add ignored configuration files to Copy local files and custom generated directories to Disposable folders in Settings → Worktrees."
     )))
 }
 
@@ -2105,6 +2171,72 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+    #[test]
+    fn automatic_disposal_requires_tracked_manifests_and_ignored_untracked_directories() {
+        let fixture = Fixture::new();
+        let root = &fixture.worktree;
+        let settings = EnvironmentSettings::default();
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        std::fs::write(root.join("node_modules/generated"), "output").unwrap();
+        // A folder name or an untracked manifest cannot classify local data.
+        assert!(check_cleanup_with_settings(root, &settings)
+            .unwrap()
+            .unwrap()
+            .contains("node_modules"));
+        std::fs::write(root.join("package.json"), "{}\n").unwrap();
+        assert!(check_cleanup_with_settings(root, &settings)
+            .unwrap()
+            .unwrap()
+            .contains("node_modules"));
+        super::super::git(root, &["add", "package.json"]).unwrap();
+        super::super::git(root, &["commit", "-m", "Add Node project"]).unwrap();
+        assert_eq!(check_cleanup_with_settings(root, &settings).unwrap(), None);
+
+        // A same-named ordinary file is not a generated directory.
+        std::fs::write(root.join("dist"), "user data").unwrap();
+        assert!(check_cleanup_with_settings(root, &settings)
+            .unwrap()
+            .unwrap()
+            .contains("dist (untracked)"));
+        std::fs::remove_file(root.join("dist")).unwrap();
+        std::fs::create_dir(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/authored.txt"), "authored output").unwrap();
+        assert!(check_cleanup_with_settings(root, &settings)
+            .unwrap()
+            .unwrap()
+            .contains("dist/authored.txt (untracked)"));
+        super::super::git(root, &["add", "dist/authored.txt"]).unwrap();
+        super::super::git(root, &["commit", "-m", "Track authored output"]).unwrap();
+        std::fs::write(root.join("dist/authored.txt"), "modified code").unwrap();
+        assert!(check_cleanup_with_settings(root, &settings)
+            .unwrap()
+            .unwrap()
+            .contains("dist/authored.txt (modified)"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn automatic_disposal_rejects_symlink_roots_without_touching_the_target() {
+        let fixture = Fixture::new();
+        let root = &fixture.worktree;
+        std::fs::write(root.join("package.json"), "{}\n").unwrap();
+        super::super::git(root, &["add", "package.json"]).unwrap();
+        super::super::git(root, &["commit", "-m", "Add Node project"]).unwrap();
+        let external = fixture.dir.join("external-dependencies");
+        std::fs::create_dir(&external).unwrap();
+        std::fs::write(external.join("keep"), "external data").unwrap();
+        std::os::unix::fs::symlink(&external, root.join("node_modules")).unwrap();
+        assert!(
+            check_cleanup_with_settings(root, &EnvironmentSettings::default())
+                .unwrap_err()
+                .contains("symlink")
+        );
+        assert_eq!(
+            std::fs::read_to_string(external.join("keep")).unwrap(),
+            "external data"
+        );
     }
 
     #[test]
