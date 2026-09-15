@@ -495,14 +495,15 @@ export const SessionPane = memo(function SessionPane({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {session.transcriptOnly ? (
           <div className="flex items-center gap-3 px-4 py-2 text-xs text-content/60">
-            <span>Saved conversation · workspace not in use</span>
+            <span>Viewing saved conversation</span>
             <button
               className="text-accent"
+              title="Prepare this conversation's workspace. Sending a message also does this automatically."
               onClick={() => {
                 void prepareWorkspace().catch(() => undefined);
               }}
             >
-              Restore workspace
+              Resume workspace
             </button>
           </div>
         ) : null}
