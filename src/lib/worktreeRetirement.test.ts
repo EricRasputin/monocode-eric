@@ -160,6 +160,33 @@ describe("worktree window leases", () => {
 });
 
 describe("resuming an archived worktree conversation", () => {
+  it("opens the saved conversation when Git rejects the Xcode license", async () => {
+    const session = {
+      ...newSession("claude", "/repo"),
+      worktreeCwd: "/checkout",
+      branch: "saved-branch",
+      blocks: [
+        {
+          id: "saved-message",
+          role: "user" as const,
+          text: "Saved conversation",
+        },
+      ],
+    };
+    const error =
+      "You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window to review and agree to the Xcode and Apple SDKs license.";
+    vi.mocked(invoke).mockRejectedValueOnce(error);
+
+    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
+      session,
+      resumed: false,
+      worktreeError: error,
+    });
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+      "worktree_prepare",
+    ]);
+  });
+
   it("restores before making the saved conversation active again", async () => {
     const session = {
       ...newSession("claude", "/repo"),
@@ -169,7 +196,10 @@ describe("resuming an archived worktree conversation", () => {
       .mockResolvedValueOnce("/checkout")
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined);
-    await resumeArchivedWorktreeSession(session);
+    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
+      session: { ...session, branch: undefined },
+      resumed: true,
+    });
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
       "worktree_prepare",
       "worktree_setup",
@@ -189,12 +219,67 @@ describe("resuming an archived worktree conversation", () => {
     vi.mocked(invoke)
       .mockResolvedValueOnce("/checkout")
       .mockRejectedValueOnce(new Error("Setup command failed"));
-    await expect(resumeArchivedWorktreeSession(session)).rejects.toThrow(
-      "Setup command failed",
-    );
+    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
+      session,
+      resumed: false,
+      worktreeError: "Error: Setup command failed",
+    });
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
       "worktree_prepare",
       "worktree_setup",
     ]);
+  });
+
+  it("retries preparation after the toolchain recovers and only then unarchives", async () => {
+    const session = {
+      ...newSession("claude", "/repo"),
+      worktreeCwd: "/checkout",
+      branch: "saved-branch",
+    };
+    vi.mocked(invoke)
+      .mockRejectedValueOnce(
+        "You have not agreed to the Xcode license agreements.",
+      )
+      .mockResolvedValueOnce("/checkout")
+      .mockResolvedValue(undefined);
+
+    expect((await resumeArchivedWorktreeSession(session)).resumed).toBe(false);
+    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
+      session: { ...session, branch: undefined },
+      resumed: true,
+    });
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+      "worktree_prepare",
+      "worktree_prepare",
+      "worktree_setup",
+      "session_set_archived",
+    ]);
+  });
+
+  it("still reports failures to save the conversation's archive state", async () => {
+    const session = {
+      ...newSession("claude", "/repo"),
+      worktreeCwd: "/checkout",
+    };
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/checkout")
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Storage unavailable"));
+    await expect(resumeArchivedWorktreeSession(session)).rejects.toThrow(
+      "Storage unavailable",
+    );
+  });
+
+  it("opens conversations in the current checkout without preparing a worktree", async () => {
+    const session = newSession("claude", "/repo");
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await expect(resumeArchivedWorktreeSession(session)).resolves.toEqual({
+      session,
+      resumed: true,
+    });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("session_set_archived", {
+      sessionId: session.id,
+      archived: false,
+    });
   });
 });

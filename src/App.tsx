@@ -16,6 +16,7 @@ import { getHarness } from "./lib/harness/registry";
 import {
   archiveSessionsWithRetirement,
   resumeArchivedWorktreeSession,
+  type SessionResumeResult,
 } from "./lib/worktreeRetirement";
 import { WorktreeRetirementDialog } from "./chrome/WorktreeRetirementDialog";
 import { AppToaster } from "./chrome/AppToaster";
@@ -3122,8 +3123,10 @@ export default function App({
         void refreshHistory(sidebarCwd);
         return null;
       }
+      let resumeResult: SessionResumeResult;
       try {
-        loaded = await resumeArchivedWorktreeSession(loaded);
+        resumeResult = await resumeArchivedWorktreeSession(loaded);
+        loaded = resumeResult.session;
       } catch (error) {
         openingSessionIds.current.delete(sessionId);
         void message(
@@ -3140,14 +3143,36 @@ export default function App({
         return null;
       }
       loadedSessionCache.current.delete(sessionId);
-      setHistory((current) =>
-        current.map((entry) =>
-          entry.id === sessionId ? { ...entry, archived: false } : entry,
-        ),
-      );
+      const noticeId = `session-worktree:${sessionId}`;
+      if (resumeResult.resumed) {
+        toast.dismiss(noticeId);
+        setHistory((current) =>
+          current.map((entry) =>
+            entry.id === sessionId ? { ...entry, archived: false } : entry,
+          ),
+        );
+      } else {
+        const error = resumeResult.worktreeError;
+        toast.warning("Conversation opened; workspace unavailable", {
+          id: noticeId,
+          description:
+            "You can read the saved conversation. Sending a message will retry workspace preparation.",
+          duration: Infinity,
+          closeButton: true,
+          action: {
+            label: "Details",
+            onClick: () => {
+              void message(error, {
+                title: "Workspace unavailable",
+                kind: "error",
+              });
+            },
+          },
+        });
+      }
       if (open) {
         const next = sessionsRef.current.map((entry) =>
-          entry.id === sessionId && entry.worktreeCwd
+          entry.id === sessionId && entry.worktreeCwd && resumeResult.resumed
             ? { ...entry, branch: undefined }
             : entry,
         );
@@ -5116,6 +5141,7 @@ export default function App({
             if (shouldPersistSession(current)) {
               await setSessionArchived(sessionId, false);
             }
+            toast.dismiss(`session-worktree:${sessionId}`);
             if (turnGen.current.get(sessionId) !== gen) return;
             if (!orchestrator.forSession(sessionId)) {
               await beginSessionTurn(sessionId, workCwd);
