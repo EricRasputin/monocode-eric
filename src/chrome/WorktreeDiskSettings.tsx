@@ -12,6 +12,9 @@ import {
   type DiskSnapshot,
 } from "../lib/worktreeDisk";
 
+import { Group, Row, Toggle, SecondaryButton } from "./SettingsControls";
+import { ChevronRight } from "./icons";
+
 type Draft = {
   budget: string;
   reserve: string;
@@ -32,10 +35,8 @@ const valid = (value: string) =>
   Number(value) > 0 &&
   Number(value) <= 1024 ** 2 &&
   Math.round(Number(value) * DISK_GIB) >= 1;
-const button =
-  "rounded-md border border-content/10 px-3 py-1.5 text-[12px] hover:bg-content/5 disabled:opacity-40";
 const input =
-  "mt-1 w-28 rounded-md border border-content/10 bg-content/5 px-2 py-1.5 text-[12px] disabled:opacity-40";
+  "w-20 rounded-md border border-content/10 bg-transparent px-2 py-1 text-right text-[12px] tabular-nums text-content outline-none focus:border-content/20 focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40";
 
 export function WorktreeDiskSettings() {
   const [usage, setUsage] = useState<DiskSnapshot | null>(null);
@@ -180,84 +181,155 @@ export function WorktreeDiskSettings() {
     }
   };
   return (
-    <section
-      aria-label="Managed checkout disk usage"
-      className="space-y-4 border-b border-content/10 pb-5"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-[13px] font-medium">Checkout disk capacity</h2>
-        <button className={button} onClick={() => void load(false, true)}>
+    <Group
+      title="Disk usage"
+      description="Storage limits for managed worktrees across all projects."
+      action={
+        <SecondaryButton onClick={() => void load(false, true)}>
           Measure now
-        </button>
-      </div>
-      {diskWarnings(usage).map((warning) => (
-        <p key={warning} role="alert" className="text-[12px] text-amber-400">
-          {warning}
-        </p>
-      ))}
-      <p className="text-[12px] text-content/55">
-        App-wide admission control and monitoring. Existing builds may keep
-        growing. Ready workspaces stay usable under pressure. Configuration
-        recovery storage has its own separate limit.
-      </p>
-      {usage ? (
+        </SecondaryButton>
+      }
+    >
+      <Row
+        label="Managed worktrees"
+        description={
+          usage
+            ? `${diskBytes(usage.reclaimableBytes)} estimated reclaimable · ${diskBytes(usage.pendingBytes)} reserved for preparation`
+            : undefined
+        }
+      >
+        {usage ? (
+          <span className="text-[12px] tabular-nums text-content/70">
+            {diskBytes(usage.usedBytes)} used
+          </span>
+        ) : (
+          <span role="status" className="text-[12px] text-content/45">
+            {feedback
+              ? "Disk measurements unavailable."
+              : "Measuring managed checkouts…"}
+          </span>
+        )}
+      </Row>
+      {diskWarnings(usage).length ? (
+        <div className="space-y-1 border-b border-content/5 px-4 py-3">
+          {diskWarnings(usage).map((warning) => (
+            <p
+              key={warning}
+              role="alert"
+              className="text-[12px] text-amber-500"
+            >
+              {warning}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {draft && baseline ? (
         <>
-          <dl className="grid grid-cols-2 gap-3 text-[12px] sm:grid-cols-4">
-            <div>
-              <dt className="text-content/50">Managed usage estimate</dt>
-              <dd>{diskBytes(usage.usedBytes)}</dd>
-            </div>
-            <div>
-              <dt className="text-content/50">Checkout budget</dt>
-              <dd>
-                {usage.settings.checkoutBudgetBytes === null
-                  ? "Disabled"
-                  : diskBytes(usage.settings.checkoutBudgetBytes)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-content/50">Safely reclaimable estimate</dt>
-              <dd>{diskBytes(usage.reclaimableBytes)}</dd>
-            </div>
-            <div>
-              <dt className="text-content/50">Pending reservations</dt>
-              <dd>{diskBytes(usage.pendingBytes)}</dd>
-            </div>
-          </dl>
-          <p className="text-[11px] text-content/45">
-            Checkout measurement: {new Date(usage.measuredAt).toLocaleString()}.{" "}
-            {usage.complete
-              ? ""
-              : "Incomplete measurement — preparation may be blocked."}
-          </p>
-          <ul className="space-y-1 text-[12px] text-content/65">
-            {usage.volumes.map((volume) => (
-              <li key={volume.id} title={volume.id}>
-                Volume containing {volume.path}:{" "}
-                <strong>{diskBytes(volume.availableBytes)} available</strong> ·
-                measured {new Date(volume.measuredAt).toLocaleTimeString()}
-              </li>
-            ))}
-          </ul>
-          <details>
-            <summary className="cursor-pointer text-[12px]">
-              Per-worktree estimates ({usage.checkouts.length})
-            </summary>
-            <div className="mt-2 overflow-x-auto">
+          <Row
+            label="Checkout budget"
+            description="Limit the space available for new and restored worktrees."
+          >
+            <input
+              className={input}
+              aria-label="Checkout budget in GiB"
+              type="number"
+              min={0}
+              max={1024 ** 2}
+              step="any"
+              value={draft.budget}
+              disabled={busy || !draft.budgetEnabled}
+              onChange={(e) => edit({ budget: e.target.value })}
+            />
+            <span className="mr-2 text-[12px] text-content/45">GiB</span>
+            <Toggle
+              label="Enable checkout budget"
+              on={draft.budgetEnabled}
+              disabled={busy}
+              onChange={(budgetEnabled) => edit({ budgetEnabled })}
+            />
+          </Row>
+          <Row
+            label="Free-space reserve"
+            description="Keep this much free space on each volume."
+          >
+            <input
+              className={input}
+              aria-label="Free-space reserve in GiB"
+              type="number"
+              min={0}
+              max={1024 ** 2}
+              step="any"
+              value={draft.reserve}
+              disabled={busy || !draft.reserveEnabled}
+              onChange={(e) => edit({ reserve: e.target.value })}
+            />
+            <span className="mr-2 text-[12px] text-content/45">GiB</span>
+            <Toggle
+              label="Enable free-space reserve"
+              on={draft.reserveEnabled}
+              disabled={busy}
+              onChange={(reserveEnabled) => edit({ reserveEnabled })}
+            />
+          </Row>
+          <Row
+            label="Preparation allowance"
+            description="Space reserved while a new worktree is being set up."
+          >
+            <input
+              className={input}
+              aria-label="Initial preparation allowance in GiB"
+              type="number"
+              min={0}
+              max={1024 ** 2}
+              step="any"
+              value={draft.allowance}
+              disabled={busy}
+              onChange={(e) => edit({ allowance: e.target.value })}
+            />
+            <span className="text-[12px] text-content/45">GiB</span>
+          </Row>
+        </>
+      ) : null}
+      {usage ? (
+        <details className="group/disk border-b border-content/5">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3.5 text-[12px] text-content/50 hover:text-content focus-visible:outline-1 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="size-3 shrink-0 transition-transform group-open/disk:rotate-90" />
+            Measurement details
+          </summary>
+          <div className="space-y-4 px-4 pb-4 text-[12px] text-content/55">
+            <p>
+              Checkout measurement:{" "}
+              {new Date(usage.measuredAt).toLocaleString()}.{" "}
+              {usage.complete
+                ? ""
+                : "Incomplete measurement — preparation may be blocked."}
+            </p>
+            <ul className="space-y-1">
+              {usage.volumes.map((volume) => (
+                <li key={volume.id} title={volume.id} className="break-words">
+                  Volume containing {volume.path}:{" "}
+                  <span className="text-content/75">
+                    {diskBytes(volume.availableBytes)} available
+                  </span>{" "}
+                  · measured {new Date(volume.measuredAt).toLocaleTimeString()}
+                </li>
+              ))}
+            </ul>
+            <div className="overflow-x-auto">
               <table className="w-full text-left text-[11px]">
+                <caption className="pb-2 text-left text-[12px] font-medium text-content/70">
+                  Per-worktree estimates ({usage.checkouts.length})
+                </caption>
                 <thead>
                   <tr>
-                    <th className="py-2">Managed checkout</th>
-                    <th>Estimate</th>
-                    <th>Reclaimable estimate</th>
+                    <th className="py-2 font-medium">Managed checkout</th>
+                    <th className="pr-3 font-medium">Estimate</th>
+                    <th className="font-medium">Reclaimable</th>
                   </tr>
                 </thead>
                 <tbody>
                   {usage.checkouts.map((checkout) => (
-                    <tr
-                      key={checkout.id}
-                      className="border-t border-content/10"
-                    >
+                    <tr key={checkout.id} className="border-t border-content/5">
                       <td className="max-w-80 break-words py-2 pr-3">
                         {checkout.path}
                         <span className="block text-content/45">
@@ -271,168 +343,90 @@ export function WorktreeDiskSettings() {
                       <td className="whitespace-nowrap pr-3">
                         {diskBytes(checkout.estimatedBytes)}
                       </td>
-                      <td>{diskBytes(checkout.reclaimableBytes)}</td>
+                      <td className="whitespace-nowrap">
+                        {diskBytes(checkout.reclaimableBytes)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </details>
-          {usage.reservations.length ? (
-            <details>
-              <summary className="cursor-pointer text-[12px]">
-                Pending preparation ({usage.reservations.length})
-              </summary>
-              <ul className="mt-2 text-[11px]">
-                {usage.reservations.map((reservation) => (
-                  <li key={reservation.token}>
-                    {reservation.path} ·{" "}
-                    {reservation.operation === "awaitingSetup"
-                      ? "Waiting for setup"
-                      : reservation.operation}{" "}
-                    · {diskBytes(reservation.remainingBytes)} remaining
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
-          <details>
-            <summary className="cursor-pointer text-[12px]">
-              Accounting limitations
-            </summary>
-            <ul className="mt-2 space-y-1 text-[11px] text-content/55">
-              {usage.limitations.map((text) => (
-                <li key={text}>{text}</li>
-              ))}
-              <li>
-                Reclaimable space is an estimate. Cleanup reviews protection and
-                recovery again before removal.
-              </li>
-            </ul>
-          </details>
-        </>
-      ) : (
-        <p role="status" className="text-[12px] text-content/50">
-          {feedback
-            ? "Disk measurements unavailable."
-            : "Measuring managed checkouts…"}
-        </p>
-      )}
-      {draft && baseline ? (
-        <div className="space-y-3 border-t border-content/10 pt-3">
-          <div className="flex flex-wrap gap-5 text-[12px]">
-            <div>
-              <label className="block">
-                <input
-                  type="checkbox"
-                  checked={draft.budgetEnabled}
-                  disabled={busy}
-                  onChange={(e) => edit({ budgetEnabled: e.target.checked })}
-                />{" "}
-                Enable checkout budget
-              </label>
-              <label>
-                <input
-                  className={input}
-                  aria-label="Checkout budget in GiB"
-                  type="number"
-                  min={0}
-                  max={1024 ** 2}
-                  step="any"
-                  value={draft.budget}
-                  disabled={busy || !draft.budgetEnabled}
-                  onChange={(e) => edit({ budget: e.target.value })}
-                />{" "}
-                GiB
-              </label>
-            </div>
-            <div>
-              <label className="block">
-                <input
-                  type="checkbox"
-                  checked={draft.reserveEnabled}
-                  disabled={busy}
-                  onChange={(e) => edit({ reserveEnabled: e.target.checked })}
-                />{" "}
-                Enable free-space reserve
-              </label>
-              <label>
-                <input
-                  className={input}
-                  aria-label="Free-space reserve in GiB"
-                  type="number"
-                  min={0}
-                  max={1024 ** 2}
-                  step="any"
-                  value={draft.reserve}
-                  disabled={busy || !draft.reserveEnabled}
-                  onChange={(e) => edit({ reserve: e.target.value })}
-                />{" "}
-                GiB per volume
-              </label>
-            </div>
-            <label>
-              Initial preparation allowance
-              <span className="block">
-                <input
-                  className={input}
-                  aria-label="Initial preparation allowance in GiB"
-                  type="number"
-                  min={0}
-                  max={1024 ** 2}
-                  step="any"
-                  value={draft.allowance}
-                  disabled={busy}
-                  onChange={(e) => edit({ allowance: e.target.value })}
-                />{" "}
-                GiB
-              </span>
-            </label>
-          </div>
-          <p className="text-[11px] text-content/50">
-            Preparation uses the larger of this allowance and the project's
-            observed completed-checkout footprint, minus checkout bytes already
-            accounted for.
-          </p>
-          <div className="flex items-center gap-3">
-            <button
-              className={button}
-              disabled={!dirty || !validDraft || conflict || busy}
-              onClick={() => void save()}
-            >
-              {busy ? "Saving…" : "Save disk settings"}
-            </button>
-            {conflict ? (
-              <>
-                <p role="alert" className="text-[12px]">
-                  Disk settings changed elsewhere. Reload before saving.
-                </p>
-                <button
-                  className={button}
-                  disabled={busy}
-                  onClick={() => void load(true)}
-                >
-                  Reload disk settings
-                </button>
-              </>
+            {usage.reservations.length ? (
+              <div>
+                <h3 className="mb-2 font-medium text-content/70">
+                  Pending preparation ({usage.reservations.length})
+                </h3>
+                <ul className="space-y-1 text-[11px]">
+                  {usage.reservations.map((reservation) => (
+                    <li key={reservation.token} className="break-words">
+                      {reservation.path} ·{" "}
+                      {reservation.operation === "awaitingSetup"
+                        ? "Waiting for setup"
+                        : reservation.operation}{" "}
+                      · {diskBytes(reservation.remainingBytes)} remaining
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
+            <div>
+              <h3 className="mb-2 font-medium text-content/70">
+                About these estimates
+              </h3>
+              <ul className="space-y-1 text-[11px] leading-relaxed">
+                {usage.limitations.map((text) => (
+                  <li key={text}>{text}</li>
+                ))}
+                <li>
+                  Reclaimable space is an estimate. Cleanup reviews protection
+                  and recovery again before removal.
+                </li>
+                <li>
+                  Existing builds may keep growing. Ready workspaces stay usable
+                  when limits are reached. Configuration recovery storage has
+                  its own separate limit.
+                </li>
+                <li>
+                  Preparation reserves the larger of the allowance and the
+                  project’s previous checkout size, minus space already counted.
+                </li>
+              </ul>
+            </div>
           </div>
-          {dirty && !validDraft ? (
-            <p role="alert" className="text-[12px] text-red-400">
-              Enter positive values up to 1,048,576 GiB. Disable the budget or
-              reserve explicitly using its checkbox.
+        </details>
+      ) : null}
+      {draft && baseline ? (
+        <div className="flex flex-wrap items-center justify-end gap-3 px-4 py-3">
+          {conflict ? (
+            <>
+              <p role="alert" className="mr-auto text-[12px] text-content/60">
+                Disk settings changed elsewhere. Reload before saving.
+              </p>
+              <SecondaryButton disabled={busy} onClick={() => void load(true)}>
+                Reload disk settings
+              </SecondaryButton>
+            </>
+          ) : dirty && !validDraft ? (
+            <p role="alert" className="mr-auto text-[12px] text-red-400">
+              Enter positive values up to 1,048,576 GiB, or turn off the limit.
             </p>
           ) : null}
+          <SecondaryButton
+            disabled={!dirty || !validDraft || conflict || busy}
+            onClick={() => void save()}
+          >
+            {busy ? "Saving…" : "Save disk settings"}
+          </SecondaryButton>
         </div>
       ) : null}
       {feedback ? (
         <p
           role={feedback === "Disk settings saved." ? "status" : "alert"}
-          className="text-[12px]"
+          className={`px-4 pb-3 text-[12px] ${feedback === "Disk settings saved." ? "text-content/50" : "text-red-400"}`}
         >
           {feedback}
         </p>
       ) : null}
-    </section>
+    </Group>
   );
 }

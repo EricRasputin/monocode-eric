@@ -72,12 +72,6 @@ async function render(projectCwd = "/repo/apps/web") {
   });
 }
 
-async function openStorage() {
-  const summary = container.querySelector("summary");
-  expect(summary).not.toBeNull();
-  await act(async () => summary!.click());
-}
-
 function button(text: string): HTMLButtonElement {
   return [...container.querySelectorAll<HTMLButtonElement>("button")].find(
     (candidate) => candidate.textContent?.includes(text),
@@ -106,12 +100,11 @@ describe("WorktreeRecoveryStorage", () => {
     vi.mocked(getRecoveryStorage).mockResolvedValue(storage(80, 100));
     await render("/repo/apps/web");
 
-    const summary = container.querySelector("summary")!;
-    expect(summary.textContent).toContain("80 MB of 100 MB used app-wide");
-    expect(summary.textContent).toContain("Near limit");
-    expect(summary.querySelector(".text-amber-400")).not.toBeNull();
+    expect(container.textContent).toContain("80 MB of 100 MB used app-wide");
+    expect(container.textContent).toContain("Near limit");
+    expect(container.querySelector(".text-amber-400")).not.toBeNull();
 
-    await openStorage();
+    expect(limitInput().closest("details")).toBeNull();
     expect(container.textContent).toContain("This project: 12.5 MB");
     expect(container.textContent).toContain("Project totals may overlap");
   });
@@ -120,15 +113,13 @@ describe("WorktreeRecoveryStorage", () => {
     vi.mocked(getRecoveryStorage).mockResolvedValue(storage(100, 100));
     await render();
 
-    const summary = container.querySelector("summary")!;
-    expect(summary.textContent).toContain("Storage full");
-    expect(summary.querySelector(".text-red-400")).not.toBeNull();
+    expect(container.textContent).toContain("Storage full");
+    expect(container.querySelector(".text-red-400")).not.toBeNull();
   });
 
   it("saves an integer MB limit as bytes with the loaded revision", async () => {
     vi.mocked(getRecoveryStorage).mockResolvedValue(storage(32, 64, 7));
     await render();
-    await openStorage();
     await enterLimit("96");
     await act(async () => button("Save limit").click());
 
@@ -147,7 +138,6 @@ describe("WorktreeRecoveryStorage", () => {
       "WORKTREE_STORAGE_CONFLICT: storage settings changed",
     );
     await render();
-    await openStorage();
     await enterLimit("96");
     await act(async () => button("Save limit").click());
 
@@ -175,15 +165,12 @@ describe("WorktreeRecoveryStorage", () => {
       }),
     );
     act(() => window.dispatchEvent(new Event("focus")));
-    await openStorage();
     await enterLimit("96");
     await act(async () => button("Save limit").click());
 
     await act(async () => finishRefresh(storage(31, 64, 3)));
     expect(limitInput().value).toBe("96");
-    expect(container.querySelector("summary")?.textContent).toContain(
-      "of 96 MB used app-wide",
-    );
+    expect(container.textContent).toContain("of 96 MB used app-wide");
 
     await enterLimit("100");
     await act(async () => button("Save limit").click());
@@ -202,7 +189,6 @@ describe("WorktreeRecoveryStorage", () => {
       }),
     );
     await render();
-    await openStorage();
     await enterLimit("96");
     act(() => button("Save limit").click());
 
@@ -211,9 +197,7 @@ describe("WorktreeRecoveryStorage", () => {
     await act(async () => finishSave(storage(33, 96, 4)));
 
     expect(limitInput().value).toBe("96");
-    expect(container.querySelector("summary")?.textContent).toContain(
-      "of 80 MB used app-wide",
-    );
+    expect(container.textContent).toContain("of 80 MB used app-wide");
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       "changed elsewhere",
     );
@@ -225,15 +209,12 @@ describe("WorktreeRecoveryStorage", () => {
       .mockRejectedValueOnce(new Error("Storage index unavailable"))
       .mockResolvedValue(storage());
     await render();
-    await openStorage();
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       "Storage index unavailable",
     );
     await act(async () => button("Try again").click());
-    expect(container.querySelector("summary")?.textContent).toContain(
-      "32 MB of 64 MB used app-wide",
-    );
+    expect(container.textContent).toContain("32 MB of 64 MB used app-wide");
     expect(getRecoveryStorage).toHaveBeenCalledTimes(2);
   });
 });

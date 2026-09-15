@@ -198,14 +198,6 @@ function selection(name = "monocode/ready"): HTMLInputElement {
   )!;
 }
 
-async function openEnvironmentSettings() {
-  const summary = [...container.querySelectorAll("summary")].find((candidate) =>
-    candidate.textContent?.includes("Worktree environment"),
-  );
-  expect(summary).toBeDefined();
-  await act(async () => summary!.click());
-}
-
 function environmentField(label: string): HTMLTextAreaElement {
   const input = container.querySelector<HTMLTextAreaElement>(
     `textarea[aria-label="${label}"]`,
@@ -238,7 +230,6 @@ describe("worktree environment settings", () => {
       pending: false,
     });
     await render();
-    await openEnvironmentSettings();
     await enterEnvironmentValue("Setup command", "npm ci && npm run build");
 
     const second = {
@@ -285,7 +276,6 @@ describe("worktree environment settings", () => {
       pending: false,
     });
     await render();
-    await openEnvironmentSettings();
     vi.mocked(useWorktrees).mockReturnValue({
       overview: {
         ...overview,
@@ -317,7 +307,6 @@ describe("worktree environment settings", () => {
       "WORKTREE_SETTINGS_CONFLICT: settings changed",
     );
     await render();
-    await openEnvironmentSettings();
     await enterEnvironmentValue("Setup command", "npm install");
     await act(async () => button("Save environment").click());
     expect(saveWorktreeSettings).toHaveBeenCalledWith(
@@ -346,7 +335,6 @@ describe("worktree environment settings", () => {
       pending: false,
     });
     await render();
-    await openEnvironmentSettings();
 
     expect(environmentField("Setup command").value).toBe("pnpm install");
     await enterEnvironmentValue(
@@ -383,11 +371,9 @@ describe("worktree environment settings", () => {
       pending: false,
     }));
     await render({ recents: [{ path: "/second", openedAt: 1 }] });
-    await openEnvironmentSettings();
     await enterEnvironmentValue("Setup command", "unsaved change");
 
     await selectProject("/second");
-    await openEnvironmentSettings();
 
     expect(environmentField("Setup command").value).toBe("npm ci");
     expect(environmentField("Copy local files").value).toBe(".env.test");
@@ -399,7 +385,6 @@ describe("worktree environment settings", () => {
       new Error("Could not save project environment"),
     );
     await render();
-    await openEnvironmentSettings();
     await enterEnvironmentValue("Setup command", "pnpm install");
     await act(async () => button("Save environment").click());
 

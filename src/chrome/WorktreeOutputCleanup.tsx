@@ -9,9 +9,9 @@ import {
   type OutputReview,
 } from "../lib/worktreeOutputCleanup";
 import { diskBytes as formatDiskBytes } from "../lib/worktreeDisk";
+import { Group, Row, SecondaryButton, Select } from "./SettingsControls";
+import { ChevronRight } from "./icons";
 
-const button =
-  "rounded-md border border-content/10 px-2.5 py-1.5 text-[12px] text-content/70 hover:bg-content/8 disabled:opacity-40";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -40,6 +40,7 @@ export function WorktreeOutputCleanup({
   const [review, setReview] = useState<OutputReview | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [reports, setReports] = useState<OutputCleanupReport[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const historySequence = useRef(0);
@@ -117,11 +118,13 @@ export function WorktreeOutputCleanup({
       ]);
       setReview(null);
       setSelection([]);
+      setHistoryOpen(true);
     } catch (cause) {
       setError(`${message(cause)}. Review again before retrying.`);
       // A lost response may follow partial deletion. The durable journal is
       // authoritative, and this review must never offer a blind execute retry.
       setReview(null);
+      setHistoryOpen(true);
       try {
         setReports(await getWorktreeOutputHistory(cwd));
       } catch (cause) {
@@ -142,183 +145,188 @@ export function WorktreeOutputCleanup({
         !candidate.blockedReason && selection.includes(candidate.path),
     ) ?? [];
   return (
-    <section
-      aria-label="Clear generated files"
-      className="space-y-3 rounded-lg border border-content/10 p-4"
+    <Group
+      title="Generated files"
+      description="Free space in an idle worktree while keeping its source, branches and conversations."
     >
-      <div>
-        <h2 className="text-[13px] font-medium">Clear generated files</h2>
-        <p className="mt-1 text-[12px] leading-relaxed text-content/50">
-          Free space in an idle worktree while keeping its checkout, unfinished
-          source, branches and conversations. This action is manual.
-        </p>
-      </div>
-      <p className="text-[12px] leading-relaxed text-content/50">
-        Only recognized or configured disposable folders are offered. Selected
-        local configuration stays in place, including files inside output
-        folders. Live workspaces, pins, agents, terminals, setup and Git locks
-        block cleanup. An idle unarchived conversation alone does not.
-      </p>
-      {!checkouts.length ? (
-        <p className="text-[12px] text-content/50">
-          No managed checkouts available for output review.
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-0 flex-1 text-[12px] text-content/70">
-            Worktree to clear
-            <select
-              aria-label="Worktree to clear"
-              value={id}
-              disabled={disabled || busy || !!review}
-              onChange={(event) => {
-                setChosen(event.target.value);
-                setError(null);
-              }}
-              className="mt-1.5 block w-full rounded-md border border-content/10 bg-surface px-2.5 py-2 text-[12px]"
-            >
-              {checkouts.map((entry) => (
-                <option key={entry.id} value={entry.id!}>
-                  {entry.branch ?? entry.path}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className={button}
-            disabled={disabled || busy || !!review || !id}
-            onClick={() => void inspect()}
-          >
-            Review generated files
-          </button>
-        </div>
-      )}
-      {review ? (
-        <div
-          aria-label="Output cleanup review"
-          className="space-y-3 border-t border-content/10 pt-3"
+      <div role="group" aria-label="Clear generated files">
+        <Row
+          label="Clear generated files"
+          description={
+            checkouts.length
+              ? "Review disposable folders before clearing them."
+              : "No managed checkouts available for output review."
+          }
         >
-          <p className="break-all text-[12px] font-medium">{review.path}</p>
-          {review.blockedReason ? (
-            <p role="alert" className="text-[12px] text-amber-500">
-              {review.blockedReason}
-            </p>
+          {checkouts.length ? (
+            <>
+              <Select
+                label="Worktree to clear"
+                value={id}
+                disabled={disabled || busy || !!review}
+                onChange={(value) => {
+                  setChosen(value);
+                  setError(null);
+                }}
+                options={checkouts.map((entry) => ({
+                  value: entry.id!,
+                  label: entry.branch ?? entry.path,
+                }))}
+              />
+              <SecondaryButton
+                disabled={disabled || busy || !!review || !id}
+                onClick={() => void inspect()}
+              >
+                Review generated files
+              </SecondaryButton>
+            </>
           ) : null}
-          <ul className="divide-y divide-content/5">
-            {review.candidates.map((candidate) => (
-              <li key={candidate.path} className="py-2">
-                <label className="flex items-start gap-2 text-[12px]">
-                  <input
-                    type="checkbox"
-                    aria-label={`Clear ${candidate.path}`}
-                    checked={selection.includes(candidate.path)}
-                    disabled={
-                      disabled ||
-                      busy ||
-                      !!review.blockedReason ||
-                      !!candidate.blockedReason
-                    }
-                    onChange={(event) =>
-                      setSelection((current) =>
-                        event.target.checked
-                          ? [...current, candidate.path]
-                          : current.filter((path) => path !== candidate.path),
-                      )
-                    }
-                  />
-                  <span className="min-w-0 break-all">
-                    {candidate.path}{" "}
-                    <span className="text-content/45">
-                      · {formatDiskBytes(candidate.estimatedBytes)} estimated
-                    </span>
-                  </span>
-                </label>
-                {candidate.blockedReason ? (
-                  <p className="mt-1 text-[12px] text-amber-500">
-                    Kept: {candidate.blockedReason}
-                  </p>
-                ) : null}
-                {candidate.preservedPaths.map((path) => (
-                  <p
-                    key={path}
-                    className="mt-1 break-all text-[12px] text-content/60"
-                  >
-                    Preserved in place: {path}
-                  </p>
-                ))}
-              </li>
-            ))}
-          </ul>
-          {!review.candidates.length ? (
-            <p className="text-[12px] text-content/55">
-              No recognized or configured output directories found.
-            </p>
-          ) : null}
-          <p className="text-[12px] text-content/60">
-            Setup will run before the next coding, file or terminal action.
-            Failed setup can be retried; unfinished source stays in place.
-          </p>
-          <p className="text-[11px] text-content/45">
-            {formatDiskBytes(
-              eligible.reduce(
-                (sum, candidate) => sum + candidate.estimatedBytes,
-                0,
-              ),
-            )}{" "}
-            estimated for selected files. Shared storage and other disk activity
-            affect actual free space.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className={button}
-              disabled={
-                disabled || busy || !!review.blockedReason || !eligible.length
-              }
-              onClick={() => void execute()}
-            >
-              Clear selected outputs ({eligible.length})
-            </button>
-            <button
-              className={button}
-              disabled={busy}
-              onClick={() => {
-                setReview(null);
-                setSelection([]);
-              }}
-            >
-              Cancel review
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {busy ? (
-        <p role="status" className="text-[12px] text-content/55">
-          Checking generated files…
-        </p>
-      ) : null}
-      {error ? (
-        <p role="alert" className="text-[12px] text-red-400">
-          {error}
-        </p>
-      ) : null}
-      {historyError ? (
-        <p role="alert" className="text-[12px] text-amber-500">
-          Cleanup history or usage refresh failed: {historyError}
-        </p>
-      ) : null}
-      {reports.length ? (
-        <details open className="border-t border-content/10 pt-3">
-          <summary className="cursor-pointer text-[12px] font-medium">
-            Recent output cleanup
+        </Row>
+        <details className="group/output-protection border-t border-content/5 px-4 py-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-content/45 hover:text-content/70 focus-visible:outline-1 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="size-3 shrink-0 transition-transform group-open/output-protection:rotate-90" />
+            What cleanup preserves
           </summary>
-          <div className="mt-2 space-y-4">
-            {reports.slice(0, 5).map((report) => (
-              <CleanupResult key={report.planId} report={report} />
-            ))}
-          </div>
+          <p className="mt-2 text-[12px] leading-relaxed text-content/45">
+            Only recognized or configured disposable folders are offered.
+            Selected local configuration stays in place, including files inside
+            output folders. Live workspaces, pins, agents, terminals, setup and
+            Git locks block cleanup. An idle unarchived conversation alone does
+            not.
+          </p>
         </details>
-      ) : null}
-    </section>
+        {review ? (
+          <div
+            aria-label="Output cleanup review"
+            className="space-y-3 border-t border-content/5 px-4 py-3.5"
+          >
+            <p className="break-all text-[12px] font-medium">{review.path}</p>
+            {review.blockedReason ? (
+              <p role="alert" className="text-[12px] text-amber-500">
+                {review.blockedReason}
+              </p>
+            ) : null}
+            <ul className="divide-y divide-content/5">
+              {review.candidates.map((candidate) => (
+                <li key={candidate.path} className="py-2">
+                  <label className="flex items-start gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-3.5 shrink-0 accent-accent"
+                      aria-label={`Clear ${candidate.path}`}
+                      checked={selection.includes(candidate.path)}
+                      disabled={
+                        disabled ||
+                        busy ||
+                        !!review.blockedReason ||
+                        !!candidate.blockedReason
+                      }
+                      onChange={(event) =>
+                        setSelection((current) =>
+                          event.target.checked
+                            ? [...current, candidate.path]
+                            : current.filter((path) => path !== candidate.path),
+                        )
+                      }
+                    />
+                    <span className="min-w-0 break-all">
+                      {candidate.path}{" "}
+                      <span className="text-content/45">
+                        · {formatDiskBytes(candidate.estimatedBytes)} estimated
+                      </span>
+                    </span>
+                  </label>
+                  {candidate.blockedReason ? (
+                    <p className="mt-1 text-[12px] text-amber-500">
+                      Kept: {candidate.blockedReason}
+                    </p>
+                  ) : null}
+                  {candidate.preservedPaths.map((path) => (
+                    <p
+                      key={path}
+                      className="mt-1 break-all text-[12px] text-content/60"
+                    >
+                      Preserved in place: {path}
+                    </p>
+                  ))}
+                </li>
+              ))}
+            </ul>
+            {!review.candidates.length ? (
+              <p className="text-[12px] text-content/55">
+                No recognized or configured output directories found.
+              </p>
+            ) : null}
+            <p className="text-[12px] text-content/60">
+              Setup will run before the next coding, file or terminal action.
+              Failed setup can be retried; unfinished source stays in place.
+            </p>
+            <p className="text-[11px] text-content/45">
+              {formatDiskBytes(
+                eligible.reduce(
+                  (sum, candidate) => sum + candidate.estimatedBytes,
+                  0,
+                ),
+              )}{" "}
+              estimated for selected files. Shared storage and other disk
+              activity affect actual free space.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <SecondaryButton
+                danger
+                disabled={
+                  disabled || busy || !!review.blockedReason || !eligible.length
+                }
+                onClick={() => void execute()}
+              >
+                Clear selected outputs ({eligible.length})
+              </SecondaryButton>
+              <SecondaryButton
+                disabled={busy}
+                onClick={() => {
+                  setReview(null);
+                  setSelection([]);
+                }}
+              >
+                Cancel review
+              </SecondaryButton>
+            </div>
+          </div>
+        ) : null}
+        {busy ? (
+          <p role="status" className="px-4 py-3 text-[12px] text-content/55">
+            Checking generated files…
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="px-4 py-3 text-[12px] text-red-400">
+            {error}
+          </p>
+        ) : null}
+        {historyError ? (
+          <p role="alert" className="px-4 py-3 text-[12px] text-amber-500">
+            Cleanup history or usage refresh failed: {historyError}
+          </p>
+        ) : null}
+        {reports.length ? (
+          <details
+            open={historyOpen}
+            onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
+            className="group/output-history border-t border-content/5 px-4 py-3"
+          >
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-content/45 hover:text-content/70 focus-visible:outline-1 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="size-3 shrink-0 transition-transform group-open/output-history:rotate-90" />
+              Recent output cleanup
+            </summary>
+            <div className="mt-2 space-y-4">
+              {reports.slice(0, 5).map((report) => (
+                <CleanupResult key={report.planId} report={report} />
+              ))}
+            </div>
+          </details>
+        ) : null}
+      </div>
+    </Group>
   );
 }
 

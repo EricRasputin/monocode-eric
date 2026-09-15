@@ -48,16 +48,16 @@ async function render(
     ),
   );
 }
-const select = () => container.querySelector("select")!;
+const selectedMode = () =>
+  container.querySelector('[role="radio"][aria-checked="true"]')?.textContent;
 const button = (text: string) =>
   [...container.querySelectorAll("button")].find(
     (b) => b.textContent === text,
   )!;
 async function choose(mode: string) {
-  await act(async () => {
-    select().value = mode;
-    select().dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await act(async () =>
+    button(mode === "automatic" ? "Automatic" : "Manual review").click(),
+  );
 }
 async function click(text: string) {
   await act(async () => button(text).click());
@@ -65,7 +65,7 @@ async function click(text: string) {
 
 it("defaults to manual and enables automatic mode only through an explicit versioned save", async () => {
   await render();
-  expect(select().value).toBe("manual");
+  expect(selectedMode()).toBe("Manual review");
   expect(button("Save retirement preference").disabled).toBe(true);
   await choose("automatic");
   expect(saveRetirementPolicy).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ it("keeps a dirty draft when another window saves and requires reload before ove
   await render();
   await choose("automatic");
   await render({ policy: { schemaVersion: 1, version: 1, mode: "manual" } });
-  expect(select().value).toBe("automatic");
+  expect(selectedMode()).toBe("Automatic");
   expect(container.textContent).toContain("another window");
   expect(button("Save retirement preference").disabled).toBe(true);
   vi.mocked(listWorktrees).mockResolvedValue({
@@ -109,7 +109,7 @@ it("keeps generic save failures retryable without claiming another window change
     new Error("Database unavailable"),
   );
   await click("Save retirement preference");
-  expect(select().value).toBe("automatic");
+  expect(selectedMode()).toBe("Automatic");
   expect(container.textContent).toContain("Database unavailable");
   expect(container.textContent).not.toContain("another window");
   expect(button("Save retirement preference").disabled).toBe(false);
@@ -125,7 +125,7 @@ it("recognizes a native version conflict even before the inventory event arrives
     "WORKTREE_RETIREMENT_CONFLICT: Retirement preference changed in another window.",
   );
   await click("Save retirement preference");
-  expect(select().value).toBe("automatic");
+  expect(selectedMode()).toBe("Automatic");
   expect(button("Save retirement preference").disabled).toBe(true);
   expect(button("Reload preference")).toBeTruthy();
 });
@@ -153,6 +153,11 @@ it("shows durable blocked and partial failure explanations and retries through n
     ],
   });
   expect(container.textContent).toContain("Pending archive cleanup (2)");
+  const pendingCleanup = [...container.querySelectorAll("summary")].find(
+    (summary) => summary.textContent === "Pending archive cleanup (2)",
+  )!;
+  await act(async () => pendingCleanup.click());
+  expect(pendingCleanup.parentElement?.hasAttribute("open")).toBe(true);
   expect(container.textContent).toContain("Conversation is pinned");
   expect(container.textContent).toContain("completion could not be recorded");
   await click("Retry automatic cleanup");

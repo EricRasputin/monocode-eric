@@ -243,6 +243,45 @@ it("excludes main, external and missing checkouts from output selection", async 
     { ...entry, id: null },
     { ...entry, missing: true },
   ]);
-  expect(container.querySelector("select")).toBeNull();
+  expect(
+    container.querySelector(
+      '[aria-haspopup="listbox"][aria-label^="Worktree to clear:"]',
+    ),
+  ).toBeNull();
   expect(container.textContent).toContain("No managed checkouts");
+});
+
+it("selects a worktree with the shared settings picker before reviewing", async () => {
+  await render([
+    entry,
+    { ...entry, id: "other", branch: "monocode/other", path: "/managed/other" },
+  ]);
+  const picker = container.querySelector<HTMLButtonElement>(
+    '[aria-haspopup="listbox"][aria-label^="Worktree to clear:"]',
+  )!;
+  await act(async () => picker.click());
+  const option = [
+    ...document.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+  ].find((item) => item.textContent === "monocode/other")!;
+  await act(async () => option.click());
+  await click("Review generated files");
+  expect(reviewWorktreeOutputs).toHaveBeenCalledExactlyOnceWith(
+    "/repo",
+    "other",
+  );
+  expect(picker.disabled).toBe(true);
+});
+
+it("keeps past cleanup details collapsed and reveals the result of a new cleanup", async () => {
+  vi.mocked(getWorktreeOutputHistory).mockResolvedValue([report]);
+  await render();
+  const history = [...container.querySelectorAll("details")].find((details) =>
+    details
+      .querySelector("summary")
+      ?.textContent?.includes("Recent output cleanup"),
+  )!;
+  expect(history.open).toBe(false);
+  await click("Review generated files");
+  await click("Clear selected outputs (2)");
+  expect(history.open).toBe(true);
 });
