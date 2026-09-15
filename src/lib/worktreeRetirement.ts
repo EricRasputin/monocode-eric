@@ -1,6 +1,7 @@
 import {
   heartbeatWorktrees,
-  planWorktreeRetirement,
+  retireArchivedWorktrees,
+  type AutomaticRetirement,
   type WorktreeRetirementPlan,
 } from "./worktrees";
 
@@ -11,6 +12,7 @@ export async function archiveSessionsWithRetirement(options: {
   archive: (sessionId: string) => Promise<boolean>;
   protectedPaths: () => string[];
   onReview: (plan: WorktreeRetirementPlan) => void;
+  onAutomatic?: (items: AutomaticRetirement[]) => void;
   onReviewError: (error: unknown) => void;
 }): Promise<boolean> {
   const archived: string[] = [];
@@ -24,9 +26,9 @@ export async function archiveSessionsWithRetirement(options: {
     if (archived.length > 0) {
       try {
         await heartbeatWorktrees(options.protectedPaths());
-        options.onReview(
-          await planWorktreeRetirement({ sessionIds: archived }),
-        );
+        const result = await retireArchivedWorktrees(archived);
+        options.onReview(result.review);
+        options.onAutomatic?.(result.automatic);
       } catch (error) {
         options.onReviewError(error);
       }

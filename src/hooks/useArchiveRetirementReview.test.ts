@@ -56,7 +56,9 @@ afterEach(() => {
 function returnPlan(plan: WorktreeRetirementPlan) {
   vi.mocked(invoke).mockImplementation(
     async (command) =>
-      (command === "worktree_retirement_plan" ? plan : undefined) as never,
+      (command === "worktree_archive_retirement"
+        ? { review: plan, automatic: [] }
+        : undefined) as never,
   );
 }
 

@@ -39,7 +39,53 @@ export type WorktreeOverview = {
   projectCwd?: string;
   settings: WorktreeSettings;
   entries: WorktreeEntry[];
+  retirementPolicy?: WorktreeRetirementPolicy;
+  automaticRetirement?: AutomaticRetirement[];
 };
+
+export type WorktreeRetirementPolicy = {
+  schemaVersion: 1;
+  version: number;
+  mode: "manual" | "automatic";
+};
+
+export const DEFAULT_RETIREMENT_POLICY: WorktreeRetirementPolicy = {
+  schemaVersion: 1,
+  version: 0,
+  mode: "manual",
+};
+
+export type AutomaticRetirement = {
+  id: string;
+  path: string;
+  planId: string | null;
+  status: "pending" | "blocked" | "failed" | "paused" | "complete";
+  reason: string | null;
+  updatedAt: number;
+};
+
+export const saveRetirementPolicy = (
+  cwd: string,
+  policy: WorktreeRetirementPolicy,
+) =>
+  invoke<WorktreeRetirementPolicy>("worktree_retirement_policy_set", {
+    cwd,
+    policy,
+  });
+
+export function isRetirementPolicyConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith("WORKTREE_RETIREMENT_CONFLICT:");
+}
+
+export const retryAutomaticRetirement = () =>
+  invoke<void>("worktree_retirement_maintain");
+
+export const retireArchivedWorktrees = (sessionIds: readonly string[]) =>
+  invoke<{ review: WorktreeRetirementPlan; automatic: AutomaticRetirement[] }>(
+    "worktree_archive_retirement",
+    { sessionIds },
+  );
 
 /** Keep a nested project's relative location when it moves to another checkout. */
 export function worktreeProjectPath(

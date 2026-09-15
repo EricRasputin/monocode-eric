@@ -34,6 +34,7 @@ import { WorktreeRetirementDialog } from "./WorktreeRetirementDialog";
 import { WorktreeEnvironmentSettings } from "./WorktreeEnvironmentSettings";
 import { WorktreeDiskSettings } from "./WorktreeDiskSettings";
 import { WorktreeRecoveryStorage } from "./WorktreeRecoveryStorage";
+import { WorktreeAutomaticRetirement } from "./WorktreeAutomaticRetirement";
 
 const button =
   "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-content/10 px-2.5 py-1.5 text-[12px] text-content/70 hover:bg-content/8 hover:text-content focus-visible:outline-1 focus-visible:outline-accent disabled:cursor-default disabled:opacity-40";
@@ -230,6 +231,16 @@ function ProjectWorktreeCleanup({
           Refresh
         </button>
       </div>
+
+      {overview ? (
+        <WorktreeAutomaticRetirement
+          cwd={cwd}
+          policy={overview.retirementPolicy}
+          items={overview.automaticRetirement}
+          disabled={busy || !!reviewPlan}
+          onSaved={() => refreshWorktrees(cwd)}
+        />
+      ) : null}
 
       {overview ? (
         <WorktreeEnvironmentSettings

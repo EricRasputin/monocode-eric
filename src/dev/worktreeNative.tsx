@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { WorktreeRetirementDialog } from "../chrome/WorktreeRetirementDialog";
 import { WorktreeRecoveryStorage } from "../chrome/WorktreeRecoveryStorage";
+import { WorktreeAutomaticRetirement } from "../chrome/WorktreeAutomaticRetirement";
+import { refreshWorktrees, useWorktrees } from "../hooks/useWorktrees";
 import { newSession, type Session } from "../lib/session";
 import { rememberProject } from "../lib/recents";
 import {
@@ -51,6 +53,7 @@ if (project && project !== "web" && project !== "api") {
 const repo = project ? `${fixtureRepo}/apps/${project}` : fixtureRepo;
 
 function NativeWorktreeVerification() {
+  const { overview } = useWorktrees(repo);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [archived, setArchived] = useState<string[]>([]);
   const [plan, setPlan] = useState<WorktreeRetirementPlan | null>(null);
@@ -82,6 +85,8 @@ function NativeWorktreeVerification() {
   const log = (text: string) => setEvents((current) => [...current, text]);
   useEffect(() => {
     let active = true;
+    // This fixture page displays transcripts, with no editor or terminal leases.
+    void heartbeatWorktrees([]);
     void listSessionsByProject(repo)
       .then(async (rows) => {
         const fixtures = rows.filter((row) =>
@@ -182,6 +187,13 @@ function NativeWorktreeVerification() {
           if (review.entries.length || review.kept.length) setPlan(review);
         },
         onReviewError: (error) => log(`Review error: ${String(error)}`),
+        onAutomatic: (items) => {
+          for (const item of items)
+            log(
+              `Automatic ${item.status}: ${item.path}${item.reason ? ` — ${item.reason}` : ""}`,
+            );
+          void refreshWorktrees(repo);
+        },
       });
     });
 
@@ -191,6 +203,15 @@ function NativeWorktreeVerification() {
       <p className="text-sm text-content/60">
         Disposable Git repository: {repo}
       </p>
+      {overview ? (
+        <WorktreeAutomaticRetirement
+          cwd={repo}
+          policy={overview.retirementPolicy}
+          items={overview.automaticRetirement}
+          disabled={busy}
+          onSaved={() => refreshWorktrees(repo)}
+        />
+      ) : null}
       <div className="flex flex-wrap gap-3">
         <a href="/" onClick={() => rememberProject(repo)}>
           Open Monocode app

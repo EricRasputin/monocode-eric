@@ -314,6 +314,7 @@ pub fn run() {
             worktrees::worktree_retire,
             worktrees::automatic::worktree_retirement_policy_set,
             worktrees::automatic::worktree_archive_retirement,
+            worktrees::automatic::worktree_retirement_maintain,
             link_preview::fetch_link_preview,
             fs::git_branches,
             fs::git_checkout,

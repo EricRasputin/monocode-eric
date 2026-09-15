@@ -3865,12 +3865,24 @@ export default function App({
             projectTerminalsRef.current,
           ),
         onReview: reviewArchiveRetirement,
-        onReviewError: () => {
+        onAutomatic: (items) => {
+          const problems = items.filter((item) => item.status !== "complete" && item.reason);
+          if (!problems.length) return;
+          toast("Conversations archived · automatic cleanup needs attention", {
+            duration: Infinity,
+            closeButton: true,
+            description: problems.map((item) => `${item.path}: ${item.reason}`).join("\n") +
+              "\nPending cleanup and retry details are saved in Settings → Worktrees.",
+          });
+        },
+        onReviewError: (error) => {
           toast(
             sessionIds.length === 1 ? "Session archived" : "Sessions archived",
             {
+              duration: Infinity,
+              closeButton: true,
               description:
-                "Cleanup could not be checked. Review it later in Settings → Worktrees.",
+                `Cleanup could not be checked: ${error instanceof Error ? error.message : String(error)}. Review it in Settings → Worktrees.`,
             },
           );
         },

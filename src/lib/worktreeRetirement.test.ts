@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  archiveSessionsWithRetirement,
-} from "./worktreeRetirement";
+import { archiveSessionsWithRetirement } from "./worktreeRetirement";
 import { heartbeatWorktrees, type WorktreeRetirementPlan } from "./worktrees";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -28,7 +26,9 @@ function fixture(sessionIds: string[]) {
   vi.mocked(invoke).mockImplementation(async (command) => {
     order.push(command);
     return (
-      command === "worktree_retirement_plan" ? emptyPlan : undefined
+      command === "worktree_archive_retirement"
+        ? { review: emptyPlan, automatic: [] }
+        : undefined
     ) as never;
   });
   const options = {
@@ -37,11 +37,65 @@ function fixture(sessionIds: string[]) {
     protectedPaths: () => paths,
     onReview: vi.fn(),
     onReviewError: vi.fn(),
+    onAutomatic: vi.fn(),
   };
   return { order, options, run: () => archiveSessionsWithRetirement(options) };
 }
 
 describe("archive retirement boundary", () => {
+  it("reports durable automatic failures without changing archive success or asking to delete branches", async () => {
+    const task = fixture(["first", "second"]);
+    const automatic = [
+      {
+        id: "checkout",
+        path: "/managed/checkout",
+        status: "failed",
+        planId: "existing-plan",
+        reason: "Recovery storage is full",
+        updatedAt: 100,
+      },
+    ];
+    vi.mocked(invoke).mockImplementation(
+      async (command) =>
+        (command === "worktree_archive_retirement"
+          ? { review: emptyPlan, automatic }
+          : undefined) as never,
+    );
+    expect(await task.run()).toBe(true);
+    expect(task.options.onAutomatic).toHaveBeenCalledExactlyOnceWith(automatic);
+    expect(task.options.onReviewError).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "worktree_retire",
+      expect.anything(),
+    );
+  });
+
+  it("can deliver one manual review and automatic completion from a mixed-project batch", async () => {
+    const task = fixture(["manual", "automatic"]);
+    const review = {
+      ...emptyPlan,
+      kept: [{ id: "manual-checkout", path: "/manual", reason: "Pinned" }],
+    };
+    const automatic = [
+      {
+        id: "automatic-checkout",
+        path: "/automatic",
+        status: "complete",
+        planId: "auto-plan",
+        reason: null,
+        updatedAt: 100,
+      },
+    ];
+    vi.mocked(invoke).mockImplementation(
+      async (command) =>
+        (command === "worktree_archive_retirement"
+          ? { review, automatic }
+          : undefined) as never,
+    );
+    expect(await task.run()).toBe(true);
+    expect(task.options.onReview).toHaveBeenCalledExactlyOnceWith(review);
+    expect(task.options.onAutomatic).toHaveBeenCalledExactlyOnceWith(automatic);
+  });
   it("commits the whole batch before releasing leases and making one review", async () => {
     const task = fixture(["first", "second", "first"]);
     expect(await task.run()).toBe(true);
@@ -49,15 +103,13 @@ describe("archive retirement boundary", () => {
       "archive:first",
       "archive:second",
       "worktree_heartbeat",
-      "worktree_retirement_plan",
+      "worktree_archive_retirement",
     ]);
     expect(invoke).toHaveBeenCalledWith("worktree_heartbeat", {
       paths: ["/repo"],
     });
-    expect(invoke).toHaveBeenCalledWith("worktree_retirement_plan", {
+    expect(invoke).toHaveBeenCalledWith("worktree_archive_retirement", {
       sessionIds: ["first", "second"],
-      cwd: null,
-      ids: [],
     });
     expect(task.options.onReview).toHaveBeenCalledExactlyOnceWith(emptyPlan);
   });
@@ -69,10 +121,8 @@ describe("archive retirement boundary", () => {
       .mockResolvedValueOnce(false);
     expect(await task.run()).toBe(false);
     expect(task.options.archive.mock.calls).toEqual([["first"], ["cancelled"]]);
-    expect(invoke).toHaveBeenLastCalledWith("worktree_retirement_plan", {
+    expect(invoke).toHaveBeenLastCalledWith("worktree_archive_retirement", {
       sessionIds: ["first"],
-      cwd: null,
-      ids: [],
     });
   });
 
@@ -87,7 +137,7 @@ describe("archive retirement boundary", () => {
   it("keeps archive successful when planning fails", async () => {
     const task = fixture(["first"]);
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === "worktree_retirement_plan")
+      if (command === "worktree_archive_retirement")
         throw new Error("Repository unavailable");
       return undefined as never;
     });
@@ -113,10 +163,8 @@ describe("archive retirement boundary", () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error("Storage failed"));
     await expect(task.run()).rejects.toThrow("Storage failed");
-    expect(invoke).toHaveBeenLastCalledWith("worktree_retirement_plan", {
+    expect(invoke).toHaveBeenLastCalledWith("worktree_archive_retirement", {
       sessionIds: ["first"],
-      cwd: null,
-      ids: [],
     });
   });
 });

@@ -7,7 +7,14 @@ import type {
   WorktreeRetirementReport,
   WorktreeRetirementSelection,
   WorktreeSettings,
+  WorktreeRetirementPolicy,
+  AutomaticRetirement,
 } from "../lib/worktrees";
+import {
+  DISK_GIB,
+  type DiskSettings,
+  type DiskSnapshot,
+} from "../lib/worktreeDisk";
 import {
   RECOVERY_STORAGE_MIB,
   type RecoveryStorageUsage,
@@ -38,6 +45,70 @@ const scenario: Scenario =
 const day = 86_400_000;
 const entries = new Map<string, WorktreeEntry[]>();
 const projectSettings = new Map<string, WorktreeSettings>();
+const retirementPolicies = new Map<string, WorktreeRetirementPolicy>();
+const automaticJobs = new Map<string, AutomaticRetirement[]>();
+const currentPolicy = (cwd: string): WorktreeRetirementPolicy =>
+  retirementPolicies.get(cwd) ?? {
+    schemaVersion: 1,
+    version: 0,
+    mode: "manual",
+  };
+// Explicit preview scenario: represents a preference the fixture user saved.
+if (previewParams.get("automatic") === "1") {
+  retirementPolicies.set(paths[0], {
+    schemaVersion: 1,
+    version: 1,
+    mode: "automatic",
+  });
+  automaticJobs.set(paths[0], [
+    {
+      id: "preview-pinned",
+      path: `${paths[0]}/.worktrees/pinned`,
+      planId: null,
+      status: "blocked",
+      reason: "Conversation is pinned",
+      updatedAt: Date.now(),
+    },
+    {
+      id: "preview-partial",
+      path: `${paths[0]}/.worktrees/partial`,
+      planId: "retirement-pending",
+      status: "failed",
+      reason:
+        "Checkout removed; final recovery journal write will retry. Branches are kept.",
+      updatedAt: Date.now(),
+    },
+  ]);
+}
+let diskPolicy: DiskSettings = {
+  schemaVersion: 1,
+  version: 0,
+  checkoutBudgetBytes: 30 * DISK_GIB,
+  minimumFreeBytes: 10 * DISK_GIB,
+  initialAllowanceBytes: 5 * DISK_GIB,
+};
+function diskSnapshot(): DiskSnapshot {
+  return {
+    schemaVersion: 1,
+    settings: diskPolicy,
+    measuredAt: Date.now(),
+    complete: true,
+    usedBytes: 12 * DISK_GIB,
+    reclaimableBytes: 4 * DISK_GIB,
+    pendingBytes: 0,
+    checkouts: [],
+    reservations: [],
+    volumes: [
+      {
+        id: "preview-volume",
+        path: "/Users/demo",
+        availableBytes: 42 * DISK_GIB,
+        measuredAt: Date.now(),
+      },
+    ],
+    limitations: ["Preview measurements use sample data."],
+  };
+}
 function currentSettings(cwd: string): WorktreeSettings {
   return (
     projectSettings.get(cwd) ?? {
@@ -294,10 +365,97 @@ mockIPC(
       planId?: string;
       selections?: WorktreeRetirementSelection[];
       settings?: WorktreeSettings;
+      policy?: WorktreeRetirementPolicy;
       limitBytes?: number;
       expectedVersion?: number;
     };
     const cwd = payload?.cwd ?? paths[0];
+    if (command === "worktree_disk_get") return diskSnapshot();
+    if (command === "worktree_disk_settings_set") {
+      const requested = (args as { settings: DiskSettings }).settings;
+      if (requested.version !== diskPolicy.version)
+        throw new Error("WORKTREE_DISK_CONFLICT: Reload disk settings");
+      diskPolicy = { ...requested, version: requested.version + 1 };
+      return diskPolicy;
+    }
+    if (command === "worktree_retirement_policy_set") {
+      if (payload.policy?.version !== currentPolicy(cwd).version)
+        throw new Error(
+          "WORKTREE_RETIREMENT_CONFLICT: Retirement preference changed in another window.",
+        );
+      const saved = {
+        ...payload.policy!,
+        version: payload.policy!.version + 1,
+      };
+      retirementPolicies.set(cwd, saved);
+      if (saved.mode === "manual")
+        automaticJobs.set(
+          cwd,
+          (automaticJobs.get(cwd) ?? []).map((item) =>
+            item.status === "complete"
+              ? item
+              : {
+                  ...item,
+                  status: "paused",
+                  reason:
+                    item.reason ??
+                    "Manual review is selected. Automatic retirement is paused.",
+                },
+          ),
+        );
+      void emit("worktree-retirement-changed");
+      return saved;
+    }
+    if (command === "worktree_retirement_maintain") {
+      for (const [project, jobs] of automaticJobs) {
+        if (currentPolicy(project).mode !== "automatic") continue;
+        automaticJobs.set(
+          project,
+          jobs.map((item) =>
+            item.status === "blocked"
+              ? item
+              : {
+                  ...item,
+                  status: "complete",
+                  reason: null,
+                  updatedAt: Date.now(),
+                },
+          ),
+        );
+      }
+      void emit("worktree-retirement-changed");
+      return;
+    }
+    if (command === "worktree_archive_retirement") {
+      const plan = archivePlan();
+      if (currentPolicy(cwd).mode === "manual")
+        return { review: plan, automatic: [] };
+      const automatic: AutomaticRetirement[] = [
+        ...plan.kept.map((item): AutomaticRetirement => ({
+          ...item,
+          planId: null,
+          status: "blocked",
+          updatedAt: Date.now(),
+        })),
+        ...plan.entries.map((item): AutomaticRetirement => ({
+          id: item.id,
+          path: item.path,
+          planId: plan.planId,
+          status: archiveDemo === "partial" ? "failed" : "complete",
+          reason:
+            archiveDemo === "partial"
+              ? "Checkout removed; final recovery journal write will retry. Branches are kept."
+              : null,
+          updatedAt: Date.now(),
+        })),
+      ];
+      automaticJobs.set(cwd, automatic);
+      void emit("worktree-retirement-changed");
+      return {
+        review: { planId: plan.planId, entries: [], kept: [] },
+        automatic,
+      };
+    }
     if (command === "git_branches") {
       return {
         current: "main",
@@ -320,6 +478,8 @@ mockIPC(
         return {
           repo: cwd,
           settings: currentSettings(cwd),
+          retirementPolicy: currentPolicy(cwd),
+          automaticRetirement: automaticJobs.get(cwd) ?? [],
           entries: [
             main,
             {
@@ -338,6 +498,8 @@ mockIPC(
       return {
         repo: cwd,
         settings: currentSettings(cwd),
+        retirementPolicy: currentPolicy(cwd),
+        automaticRetirement: automaticJobs.get(cwd) ?? [],
         entries:
           scenario === "Empty"
             ? currentEntries(cwd).filter((entry) => entry.main)
@@ -554,6 +716,21 @@ function Preview() {
       },
       onReviewError: (cause) =>
         setNotice(`Archived. Review failed: ${String(cause)}`),
+      onAutomatic: (items) => {
+        if (!items.length) return;
+        const problems = items.filter((item) => item.reason);
+        setNotice(
+          problems.length
+            ? `Archived. ${problems.map((item) => item.reason).join(" ")}`
+            : `Archived. ${items.length} checkout(s) retired; recovery and branches kept.`,
+        );
+        if (problems.length)
+          toast("Archived · automatic cleanup needs attention", {
+            description: problems.map((item) => item.reason).join("\n"),
+            duration: Infinity,
+            closeButton: true,
+          });
+      },
     });
   };
 

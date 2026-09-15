@@ -2086,16 +2086,53 @@ fn build_retirement_plan_inner(
     let (records, mut kept) = selected_retirement_records(conn, session_ids, cwd, ids)?;
     let mut snapshots = Vec::new();
     for entry in records {
-        let _repository = host
+        let _repository = match host
             .map(|host| host.repository_guard(&entry.common))
-            .transpose()?;
+            .transpose()
+        {
+            Ok(guard) => guard,
+            Err(reason) => {
+                kept.push(WorktreeRetirementKept {
+                    id: entry.id,
+                    path: entry.path,
+                    reason,
+                });
+                continue;
+            }
+        };
+        let entry = if session_ids.is_empty() {
+            match automatic::reconcile_for_manual_review(conn, windows, entry.clone()) {
+                Ok(entry) => entry,
+                Err(reason) => {
+                    kept.push(WorktreeRetirementKept {
+                        id: entry.id,
+                        path: entry.path,
+                        reason,
+                    });
+                    continue;
+                }
+            }
+        } else {
+            entry
+        };
         if !session_ids.is_empty() && has_unarchived_session(conn, &entry)? {
             // Archiving one of several conversations sharing a checkout is
             // routine. Leave the checkout alone and do not surface cleanup.
             continue;
         }
-        if !session_ids.is_empty() && automatic::enabled(conn, &entry)? {
-            continue;
+        if !session_ids.is_empty() {
+            match automatic::enabled(conn, &entry) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(reason) => {
+                    kept.push(WorktreeRetirementKept {
+                        id: entry.id,
+                        path: entry.path,
+                        reason,
+                    });
+                    continue;
+                }
+            }
         }
         match review_retirement(conn, windows, &entry, &plan_id) {
             Ok(snapshot) => {
@@ -2119,7 +2156,9 @@ fn build_retirement_plan_inner(
             }),
         }
     }
-    persist_retirement_plan(conn, &plan_id, &snapshots)?;
+    if !snapshots.is_empty() {
+        persist_retirement_plan(conn, &plan_id, &snapshots)?;
+    }
     let entries = snapshots.iter().map(snapshot_entry).collect();
     Ok(WorktreeRetirementPlan {
         plan_id,
@@ -3399,6 +3438,9 @@ fn remove_checkout(
 }
 
 fn retirement_pending(conn: &Connection, entry: &Owned) -> bool {
+    if entry.pending_retirement_plan_id.is_some() {
+        return true;
+    }
     if !entry.removed {
         return false;
     }

@@ -1,6 +1,6 @@
 # Worktree feature scope
 
-Recovery storage is the final approved implementation item for this fork's worktree feature. The user-facing workflow is documented in [Worktrees in this fork](worktrees.md).
+Recovery storage, checkout capacity (#15), and opt-in automatic retirement after archiving (#16) are implemented for this fork. The user-facing workflow is documented in [Worktrees in this fork](worktrees.md).
 
 ## Implemented storage behavior
 
@@ -13,7 +13,13 @@ Git recovery references preserve committed code. Monocode separately saves selec
 - Background maintenance reclaims only archives with no durable lifecycle reference, then blobs without any remaining manifest. Failed retryable retirement records remain protected. Unique historical snapshots and Git recovery references never expire by age.
 - Freed SQLite pages are reused. Quiet maintenance attempts bounded physical compaction when the savings justify rewriting a reasonably sized database. A busy or interrupted compaction can retry without turning a completed retirement into a failure.
 
-The storage limit is a configurable resource budget, not a reason to discard recovery data. It excludes Git objects, checked-out files, dependencies and unrelated conversation data in SQLite.
+The storage limit is a configurable resource budget, not a reason to discard recovery data. It excludes Git objects, checked-out files, dependencies and unrelated conversation data in SQLite. Automatic retirement preserves the same immutable recovery data and leaves the checkout intact when configuration storage cannot admit the snapshot. Pending work and explanations survive restarts; raising the budget schedules another coordinated attempt without creating a duplicate recovery plan.
+
+## Archive retirement
+
+Project policy schema 1 defaults to manual review, with an independent save version for concurrent settings windows. Older automatic-cleanup preferences never opt users in. Saved automatic mode removes only eligible managed checkouts after their last conversation is archived, without requesting branch deletion, merge evidence or remote access. Native queue records survive failures and restart; manual review remains available after automatic mode is disabled, including interrupted removals. Pins, activity, Git locks, local files and capacity reservations are checked at the final removal boundary. New windows must register their leases before automatic cleanup can proceed.
+
+Disposable native tests cover shared/bulk archives, multiple windows, changing activity and pins, setup overlap and preparation handoffs, recovery quota failures, partial removal, saved policy changes, manual takeover, exact recovery, restart retry and idempotence. UI tests cover explicit saving, stale versions, generic save errors, durable explanations and archive-success isolation. No lifecycle verification uses live user worktrees.
 
 ## Deliberate boundaries
 

@@ -426,9 +426,29 @@ fn partial_git_removal_retries_the_same_journal_after_restart() {
     configure(&f, Mode::Automatic);
     let entry = f.create("automatic-partial");
     session(&f, &entry, "history", true);
+    let before = f
+        .host
+        .disk
+        .snapshot(&f.conn, &HashMap::new(), &[], true)
+        .unwrap();
+    assert!(before.used_bytes > 0);
     f.conn.execute_batch("CREATE TRIGGER fail_completion BEFORE UPDATE OF removed ON managed_worktrees WHEN NEW.removed = 1 BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END;").unwrap();
     run(&f);
     assert!(!Path::new(&entry.path).exists());
+    let after = f
+        .host
+        .disk
+        .snapshot(&f.conn, &HashMap::new(), &[], false)
+        .unwrap();
+    assert!(after.used_bytes < before.used_bytes);
+    assert!(
+        after
+            .checkouts
+            .iter()
+            .find(|c| c.id == entry.id)
+            .unwrap()
+            .missing
+    );
     assert_eq!(item(&f).status, "failed");
     assert!(item(&f).reason.unwrap().contains("completion unavailable"));
     let plan = item(&f).plan_id;
@@ -518,6 +538,255 @@ fn automatic_plan_cannot_be_used_to_request_branch_deletion() {
     assert!(!requested);
     run(&f);
     assert_eq!(item(&f).status, "complete");
+}
+
+#[test]
+fn disabled_automatic_attempt_can_be_resumed_by_a_fresh_manual_review() {
+    for folder_removed in [false, true] {
+        let f = Fixture::new();
+        configure(&f, Mode::Automatic);
+        let entry = f.create("automatic-manual-takeover");
+        session(&f, &entry, "history", true);
+        let plan = prepare(&f, &entry);
+        let snapshot = load_retirement_snapshot(&f.conn, &plan, &entry.id)
+            .unwrap()
+            .unwrap();
+        ensure_local_recovery(&f.conn, &snapshot).unwrap();
+        environment::preserve(&f.conn, &entry, &plan).unwrap();
+        begin_worktree_removal(&f.conn, &snapshot).unwrap();
+        if folder_removed {
+            git(&f.repo, &["worktree", "remove", "--", &entry.path]).unwrap();
+        }
+        configure(&f, Mode::Manual);
+        run(&f);
+        assert_eq!(item(&f).status, "paused");
+        let inventory = overview(&f.conn, &HashMap::new(), &entry.repo).unwrap();
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .find(|e| e.id.as_deref() == Some(&entry.id))
+                .unwrap()
+                .retirement_pending
+        );
+        let manual = build_retirement_plan_coordinated(
+            &f.conn,
+            &f.host,
+            &HashMap::new(),
+            &[],
+            Some(&entry.repo),
+            std::slice::from_ref(&entry.id),
+        )
+        .unwrap();
+        assert_eq!(manual.entries.len(), 1, "{:?}", manual.kept);
+        assert_ne!(manual.plan_id, plan);
+        assert_eq!(
+            Path::new(&entry.path).exists(),
+            !folder_removed,
+            "review itself cannot remove a folder"
+        );
+        let result = execute(&f, &entry, &manual.plan_id);
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert!(result.worktree_removed);
+        assert!(!result.local_branch_deleted && !result.remote_branch_deleted);
+        assert!(ref_oid(&f.repo, &format!("refs/heads/{}", entry.branch))
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            direct_ref_oid(&f.repo, &snapshot.recovery_ref)
+                .unwrap()
+                .as_deref(),
+            Some(snapshot.commit_oid.as_str())
+        );
+        let requests: i64 = f
+            .conn
+            .query_row(
+                "SELECT SUM(local_requested + remote_requested) FROM worktree_retirement_items",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(requests, 0);
+    }
+}
+
+#[test]
+fn manual_takeover_keeps_pending_recovery_when_ownership_or_activity_changed() {
+    let f = Fixture::new();
+    configure(&f, Mode::Automatic);
+    let entry = f.create("automatic-takeover-pin");
+    session(&f, &entry, "history", true);
+    let plan = prepare(&f, &entry);
+    let snapshot = load_retirement_snapshot(&f.conn, &plan, &entry.id)
+        .unwrap()
+        .unwrap();
+    ensure_local_recovery(&f.conn, &snapshot).unwrap();
+    environment::preserve(&f.conn, &entry, &plan).unwrap();
+    begin_worktree_removal(&f.conn, &snapshot).unwrap();
+    configure(&f, Mode::Manual);
+    f.conn
+        .execute("UPDATE managed_worktrees SET pinned = 1", [])
+        .unwrap();
+    let manual = build_retirement_plan_coordinated(
+        &f.conn,
+        &f.host,
+        &HashMap::new(),
+        &[],
+        Some(&entry.repo),
+        std::slice::from_ref(&entry.id),
+    )
+    .unwrap();
+    assert!(manual.entries.is_empty());
+    assert!(manual.kept[0].reason.contains("Pinned"));
+    assert_eq!(
+        owned(&f.conn).unwrap()[0]
+            .pending_retirement_plan_id
+            .as_deref(),
+        Some(plan.as_str())
+    );
+}
+
+#[test]
+fn changed_commits_and_saved_environment_get_one_new_review_without_replacing_old_recovery() {
+    let f = Fixture::new();
+    configure(&f, Mode::Automatic);
+    let entry = f.create("automatic-new-state");
+    session(&f, &entry, "history", true);
+    let original = prepare(&f, &entry);
+    let snapshot = load_retirement_snapshot(&f.conn, &original, &entry.id)
+        .unwrap()
+        .unwrap();
+    ensure_local_recovery(&f.conn, &snapshot).unwrap();
+    environment::preserve(&f.conn, &entry, &original).unwrap();
+    std::fs::write(
+        Path::new(&entry.path).join("tracked.txt"),
+        "new committed code",
+    )
+    .unwrap();
+    git(Path::new(&entry.path), &["commit", "-am", "New work"]).unwrap();
+    let scope = environment::scope_for_entry(&f.conn, &entry).unwrap();
+    environment::save_settings(
+        &f.conn,
+        &scope,
+        &environment::EnvironmentSettings {
+            copy_paths: vec![".env".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::write(Path::new(&entry.path).join(".env"), "new configuration").unwrap();
+    let new_head = resolve_commit(Path::new(&entry.path), "HEAD").unwrap();
+    run(&f);
+    run(&f);
+    assert_eq!(item(&f).status, "complete");
+    assert_eq!(plan_count(&f.conn), 2);
+    assert_ne!(item(&f).plan_id.as_deref(), Some(original.as_str()));
+    assert_eq!(
+        direct_ref_oid(&f.repo, &snapshot.recovery_ref)
+            .unwrap()
+            .as_deref(),
+        Some(snapshot.commit_oid.as_str())
+    );
+    assert_eq!(
+        latest_local_recovery(&f.conn, &entry.id)
+            .unwrap()
+            .unwrap()
+            .commit_oid,
+        new_head
+    );
+}
+
+#[test]
+fn archive_reporting_keeps_pinned_automatic_failures_visible_without_empty_plans() {
+    let f = Fixture::new();
+    configure(&f, Mode::Automatic);
+    let entry = f.create("automatic-archive-report");
+    session(&f, &entry, "history", true);
+    f.conn
+        .execute("UPDATE sessions SET pinned = 1", [])
+        .unwrap();
+    run(&f);
+    let result = archive_result(&f.conn, &f.host, &["history".into()], &HashMap::new()).unwrap();
+    assert!(result.review.entries.is_empty() && result.review.kept.is_empty());
+    assert_eq!(result.automatic.len(), 1);
+    assert!(result.automatic[0]
+        .reason
+        .as_ref()
+        .unwrap()
+        .contains("pinned"));
+    assert_eq!(plan_count(&f.conn), 0);
+    f.conn
+        .execute("UPDATE sessions SET pinned = 0", [])
+        .unwrap();
+    run(&f);
+    for _ in 0..2 {
+        let result =
+            archive_result(&f.conn, &f.host, &["history".into()], &HashMap::new()).unwrap();
+        assert_eq!(result.automatic[0].status, "complete");
+    }
+    assert_eq!(plan_count(&f.conn), 1);
+}
+
+#[test]
+fn pausing_automatic_cleanup_keeps_the_last_failure_explanation_visible() {
+    let f = Fixture::new();
+    configure(&f, Mode::Automatic);
+    let entry = f.create("automatic-pause-failure");
+    session(&f, &entry, "history", true);
+    let plan = prepare(&f, &entry);
+    record_status(
+        &f.conn,
+        &entry.id,
+        "failed",
+        Some("Recovery storage is full"),
+    )
+    .unwrap();
+    configure(&f, Mode::Manual);
+    run(&f);
+    run(&f);
+    assert_eq!(item(&f).status, "paused");
+    assert_eq!(item(&f).reason.as_deref(), Some("Recovery storage is full"));
+    assert_eq!(item(&f).plan_id.as_deref(), Some(plan.as_str()));
+    assert!(Path::new(&entry.path).exists());
+}
+
+#[test]
+fn bulk_archive_routes_each_repository_to_its_saved_mode() {
+    let f = Fixture::new();
+    let other = Fixture::new();
+    configure(&f, Mode::Automatic);
+    let automatic = f.create("automatic-mixed");
+    let manual = crate::worktrees::tests::create(
+        &f.conn,
+        &f.host,
+        &path_to_js(&other.repo),
+        "manual-mixed",
+        "Manual task",
+        Some("main"),
+    )
+    .unwrap();
+    disk::release_handoff(&f.host.disk, &f.conn, &manual.path).unwrap();
+    session(&f, &automatic, "automatic-history", true);
+    session(&f, &manual, "manual-history", true);
+    run(&f);
+    let report = archive_result(
+        &f.conn,
+        &f.host,
+        &[
+            "automatic-history".into(),
+            "manual-history".into(),
+            "automatic-history".into(),
+        ],
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert_eq!(report.automatic.len(), 1);
+    assert_eq!(report.automatic[0].status, "complete");
+    assert_eq!(report.review.entries.len(), 1);
+    assert_eq!(report.review.entries[0].id, manual.id);
+    assert!(Path::new(&manual.path).exists());
+    assert!(!Path::new(&automatic.path).exists());
+    assert_eq!(plan_count(&f.conn), 2);
 }
 
 #[cfg(unix)]

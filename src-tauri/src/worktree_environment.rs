@@ -560,6 +560,31 @@ pub(super) fn record_review(conn: &Connection, entry: &Owned, plan_id: &str) -> 
     Ok(())
 }
 
+/// Detect new code-preservation inputs without changing any immutable archive.
+pub(super) fn review_is_current(
+    conn: &Connection,
+    entry: &Owned,
+    plan_id: &str,
+) -> Result<bool, String> {
+    let scope = scope_for_entry(conn, entry)?;
+    let reviewed: String = conn.query_row(
+        "SELECT settings_json FROM worktree_environment_reviews WHERE plan_id = ?1 AND worktree_id = ?2 AND common_dir = ?3 AND project_path = ?4",
+        params![plan_id, entry.id, scope.common, scope.relative], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    let settings = load_settings(conn, &scope)?;
+    if serde_json::from_str::<EnvironmentSettings>(&reviewed).map_err(|e| e.to_string())?
+        != settings
+    {
+        return Ok(false);
+    }
+    let archive: Option<String> = conn.query_row("SELECT archive_id FROM worktree_environment_archives WHERE plan_id = ?1 AND worktree_id = ?2", params![plan_id, entry.id], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+    match archive {
+        Some(archive) => Ok(load_archive(conn, &archive)?
+            == snapshot_copy_files(&scope.project_path_in(Path::new(&entry.path)), &settings)?),
+        None => Ok(true),
+    }
+}
+
 /// Preserve an immutable snapshot before Git removes the checkout. Existing
 /// archives for the same review are verified rather than overwritten.
 pub(super) fn preserve(conn: &Connection, entry: &Owned, plan_id: &str) -> Result<String, String> {

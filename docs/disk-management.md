@@ -47,7 +47,7 @@ external writes still affect the native free-space measurement.
 
 Reclaimable estimates use existing retirement safety checks (including windows,
 native processes, setup, conversation references, pins and local configuration).
-They are advisory: explicit cleanup review and execution recheck those protections.
+They are advisory: manual and opt-in automatic retirement recheck those protections.
 No quota policy bypasses retirement or recovery protections.
 
 ## Coordination and failure handling
@@ -71,7 +71,16 @@ At startup, dead-owner reservations are reconciled before new admission; survivi
 setup processes retain theirs. During runtime monitoring, abandoned handoffs from
 this native process expire after 60 seconds only if no window/native process
 protects the checkout and setup is not running. A later preparation re-admits.
-Explicit retirement also clears obsolete handoffs. No reconciliation deletes files.
+Retirement honors live preparation handoffs; obsolete handoffs are reconciled before
+they can stop later maintenance indefinitely. No capacity reconciliation deletes files.
+
+The separate project preference for automatic retirement after archiving defaults
+to manual review. When explicitly enabled, its native maintenance queue shares
+repository/lifecycle coordination with preparation and manual retirement and
+rechecks capacity reservations immediately before removal. Complete or partial
+cleanup invalidates disk measurements before the next admission and schedules a
+refresh outside mutation locks. Disk pressure never enables automatic retirement
+or changes a project's saved choice.
 
 Capacity errors cross IPC as structured `WORKTREE_CAPACITY` failures with reason,
 requested path/operation, required growth, affected volume, a timestamped snapshot

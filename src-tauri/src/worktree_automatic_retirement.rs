@@ -91,7 +91,7 @@ fn save_policy(
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     if policy(&tx, scope)?.version != requested.version {
         return Err(
-            "Retirement preference changed in another window. Reload and save again.".into(),
+            "WORKTREE_RETIREMENT_CONFLICT: Retirement preference changed in another window. Reload and save again.".into(),
         );
     }
     let saved = Policy {
@@ -138,6 +138,44 @@ pub(super) fn validate_selection(
         );
     }
     Ok(())
+}
+
+/// A fresh manual review can take over an interrupted automatic attempt even
+/// after automatic mode is disabled. This reconciles only the journal: it never
+/// removes a folder or branch. The new review carries fresh, explicit choices.
+pub(super) fn reconcile_for_manual_review(
+    conn: &Connection,
+    windows: &HashMap<String, Vec<PathBuf>>,
+    entry: Owned,
+) -> Result<Owned, String> {
+    let Some(plan) = &entry.pending_retirement_plan_id else {
+        return Ok(entry);
+    };
+    let snapshot = load_retirement_snapshot(conn, plan, &entry.id)?
+        .ok_or("Pending retirement recovery record is missing")?;
+    if !is_automatic_plan(conn, &snapshot)? {
+        return Ok(entry);
+    }
+    current_owned_for_snapshot(conn, &snapshot)?;
+    if let Some(reason) = active_use_reason(conn, windows, &entry)? {
+        return Err(reason);
+    }
+    check_git_locks(&entry)?;
+    if repository(&entry.repo)?.1 != entry.common {
+        return Err("Repository identity changed".into());
+    }
+    if actual_worktree_removed(&snapshot) {
+        // Verifies exact recovery ref, configuration archive and pending owner.
+        complete_worktree_removal(conn, &snapshot)?;
+        record_status(conn, &entry.id, "complete", None)?;
+    } else {
+        setup::validate_checkout(&entry, &entry.path)?;
+        cancel_pending_removal_for_present_checkout(conn, &entry)?;
+    }
+    owned(conn)?
+        .into_iter()
+        .find(|e| e.id == entry.id)
+        .ok_or("Managed worktree ownership is missing".into())
 }
 
 fn has_archived_session(conn: &Connection, entry: &Owned) -> Result<bool, String> {
@@ -198,7 +236,10 @@ pub(super) fn project_pending(
 ) -> Result<Vec<Pending>, String> {
     let ids = owned(conn)?
         .into_iter()
-        .filter(|entry| entry.common == scope.common)
+        .filter(|entry| {
+            entry.common == scope.common
+                || path_inside(Path::new(&scope.main_path), Path::new(&entry.repo))
+        })
         .filter_map(|entry| {
             match environment::scope_for_entry(conn, &entry) {
                 Ok(origin)
@@ -271,11 +312,20 @@ fn prepare_attempt(
         return Ok(None);
     }
     if !enabled(conn, &entry)? {
+        let previous: Option<String> = conn
+            .query_row(
+                "SELECT reason FROM worktree_automatic_retirement WHERE worktree_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
         record_status(
             conn,
             id,
             "paused",
-            Some("Manual review is selected. Automatic retirement is paused."),
+            previous.as_deref().or(Some(
+                "Manual review is selected. Automatic retirement is paused.",
+            )),
         )?;
         return Ok(None);
     }
@@ -286,7 +336,7 @@ fn prepare_attempt(
     if let Some(reason) = active_use_reason(conn, &protected, &entry)? {
         return Err(reason);
     }
-    let existing: Option<String> = conn
+    let mut existing: Option<String> = conn
         .query_row(
             "SELECT plan_id FROM worktree_automatic_retirement WHERE worktree_id = ?1",
             [id],
@@ -294,8 +344,24 @@ fn prepare_attempt(
         )
         .map_err(|e| e.to_string())?;
     if let Some(plan) = &existing {
-        if load_retirement_snapshot(conn, plan, id)?.is_some() {
-            return Ok(existing);
+        if let Some(snapshot) = load_retirement_snapshot(conn, plan, id)? {
+            current_owned_for_snapshot(conn, &snapshot)?;
+            if entry.pending_retirement_plan_id.is_some() || !Path::new(&entry.path).exists() {
+                return Ok(existing);
+            }
+            if let Some(reason) = environment::check_cleanup(conn, &entry)? {
+                return Err(reason);
+            }
+            if resolve_commit(Path::new(&entry.path), "HEAD")? == snapshot.commit_oid
+                && environment::review_is_current(conn, &entry, plan)?
+            {
+                return Ok(existing);
+            }
+            // This is newly committed work or explicitly changed preservation
+            // policy/configuration, not a retry of the same recovery. Keep the
+            // queue record and all immutable older recoveries; review once for
+            // the new state. Unchanged failures always reuse their saved plan.
+            existing = None;
         }
     }
     if entry.pending_retirement_plan_id.is_some() {
@@ -464,6 +530,54 @@ pub struct ArchiveRetirement {
 }
 
 #[tauri::command(async)]
+pub fn worktree_retirement_maintain(app: AppHandle) -> Result<(), String> {
+    maintain(&app)
+}
+
+fn archive_result(
+    conn: &Connection,
+    host: &WorktreeHost,
+    session_ids: &[String],
+    windows: &HashMap<String, Vec<PathBuf>>,
+) -> Result<ArchiveRetirement, String> {
+    let records = owned(conn)?;
+    let mut ids = HashSet::new();
+    for id in session_ids {
+        let path: Option<String> = conn
+            .query_row(
+                "SELECT COALESCE(worktree_cwd, cwd) FROM sessions WHERE id = ?1 AND archived = 1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(path) = path {
+            for entry in &records {
+                if (entry.id == *id || path_inside(&expand_home(&path), Path::new(&entry.path)))
+                    && enabled(conn, entry).unwrap_or(true)
+                {
+                    ids.insert(entry.id.clone());
+                }
+            }
+        }
+    }
+    let automatic: Vec<_> = pending(conn)?
+        .into_iter()
+        .filter(|p| ids.contains(&p.id))
+        .collect();
+    let mut review =
+        build_retirement_plan_coordinated(conn, host, windows, session_ids, None, &[])?;
+    review.kept.retain(|kept| {
+        !automatic.iter().any(|item| {
+            kept.id == item.id
+                || (!kept.path.is_empty()
+                    && path_inside(Path::new(&kept.path), Path::new(&item.path)))
+        })
+    });
+    Ok(ArchiveRetirement { review, automatic })
+}
+
+#[tauri::command(async)]
 pub fn worktree_archive_retirement(
     app: AppHandle,
     store: State<'_, SessionStore>,
@@ -474,20 +588,8 @@ pub fn worktree_archive_retirement(
     // even if this independent cleanup command fails before queue discovery.
     maintain(&app)?;
     let conn = store.open_auxiliary_conn()?;
-    let (records, _) = selected_retirement_records(&conn, &session_ids, None, &[])?;
-    let ids: HashSet<_> = records
-        .into_iter()
-        .filter(|e| enabled(&conn, e).unwrap_or(false))
-        .map(|e| e.id)
-        .collect();
-    let automatic = pending(&conn)?
-        .into_iter()
-        .filter(|p| ids.contains(&p.id))
-        .collect();
     let windows = protection(&app, &*host.operation_guard()?);
-    let review =
-        build_retirement_plan_coordinated(&conn, &host, &windows, &session_ids, None, &[])?;
-    Ok(ArchiveRetirement { review, automatic })
+    archive_result(&conn, &host, &session_ids, &windows)
 }
 
 #[cfg(test)]
