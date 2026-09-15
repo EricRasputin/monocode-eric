@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { WorktreeRetirementDialog } from "../chrome/WorktreeRetirementDialog";
@@ -21,9 +21,15 @@ import {
   listWorktrees,
   planWorktreeRetirement,
   saveWorktreeSettings,
+  setupWorktree,
   type WorktreeRetirementPlan,
 } from "../lib/worktrees";
 import { createSessionWorkspacePreparation } from "../lib/sessionWorkspace";
+import {
+  getWorktreeDisk,
+  isCapacityFailure,
+  saveWorktreeDiskSettings,
+} from "../lib/worktreeDisk";
 import "../index.css";
 
 if (!import.meta.env.DEV || !isTauri()) {
@@ -198,6 +204,66 @@ function NativeWorktreeVerification() {
       });
     });
 
+  const checkConcurrentAdmission = () =>
+    run(async () => {
+      const before = await getWorktreeDisk(true);
+      const allowance = 16 * 1024 ** 2;
+      await saveWorktreeDiskSettings({
+        ...before.settings,
+        checkoutBudgetBytes: before.usedBytes + allowance,
+        minimumFreeBytes: null,
+        initialAllowanceBytes: allowance,
+      });
+      try {
+        // Hold the successful create's durable setup handoff until both native
+        // requests settle. This exercises the real IPC gap deterministically.
+        const results = await Promise.allSettled(
+          [1, 2].map((index) =>
+            invoke<string>("worktree_create", {
+              cwd: repo,
+              sessionId: crypto.randomUUID(),
+              name: `Capacity verification ${index}`,
+              baseRef: "main",
+            }),
+          ),
+        );
+        const admitted = results.filter(
+          (result): result is PromiseFulfilledResult<string> =>
+            result.status === "fulfilled",
+        );
+        const rejected = results.filter(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        const during = await getWorktreeDisk(true);
+        log(`Concurrent admission: ${JSON.stringify({ results, during })}`);
+        if (
+          admitted.length !== 1 ||
+          rejected.length !== 1 ||
+          !isCapacityFailure(rejected[0].reason) ||
+          during.reservations.length !== 1
+        ) {
+          throw new Error(
+            "Expected one admission, one capacity rejection and one durable reservation",
+          );
+        }
+        for (const result of admitted) await setupWorktree(result.value);
+        const after = await getWorktreeDisk(true);
+        if (after.reservations.length !== 0)
+          throw new Error("Completed setup retained a capacity reservation");
+        log(
+          `PASS: concurrent capacity rejection; setup released reservation. ${JSON.stringify(after)}`,
+        );
+      } finally {
+        const latest = await getWorktreeDisk();
+        await saveWorktreeDiskSettings({
+          ...before.settings,
+          version: latest.settings.version,
+        });
+        await refreshWorktrees(repo);
+      }
+    });
+
   return (
     <main className="mx-auto max-w-3xl space-y-5 p-10 text-content">
       <h1 className="text-2xl font-semibold">Native worktree verification</h1>
@@ -222,6 +288,24 @@ function NativeWorktreeVerification() {
         />
       ) : null}
       <div className="flex flex-wrap gap-3">
+        <button
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              const path = fixtureRepo.replace(/\/repo$/, "/native-events.json");
+              await invoke("write_text_file", {
+                path,
+                content: JSON.stringify(events, null, 2),
+              });
+              log(`Saved verification log: ${path}`);
+            })
+          }
+        >
+          Save verification log
+        </button>
+        <button disabled={busy} onClick={() => void checkConcurrentAdmission()}>
+          Verify concurrent capacity admission
+        </button>
         <a href="/" onClick={() => rememberProject(repo)}>
           Open Monocode app
         </a>

@@ -34,3 +34,14 @@ Monocode tracks its own active sessions, agents, terminals and setup operations.
 Git integration checks remain conservative. Unknown merge evidence keeps branches, while a clean, recoverable checkout can still be retired. Hosting-provider PR integration is outside scope and would need to verify the exact repository, branch and commit before authorizing deletion.
 
 Native verification for this personal fork targets macOS. Additional Windows and Linux runtime verification remains a platform limitation. For #17, the Windows filesystem boundary was type-checked with stable Rust for `x86_64-pc-windows-msvc` using stable handle APIs. A full cross-target check was attempted but the local Mac lacks Windows C/SDK headers (`ring` could not find `assert.h`); no Windows runtime result is claimed.
+
+## Dependency sharing investigation (#18)
+
+[Measured Node and Rust fixtures](worktree-dependency-sharing.md) compare isolated
+outputs with supported stores, include shared-cache bytes and cleanup behavior,
+and distinguish disk accounting from rebuild speed. Retain this project's npm
+workflow and private build outputs. Compiler-cache results are unavailable without
+`sccache`; an opt-in follow-up needs its own measurements and cache accounting.
+
+The [combined #13 validation](worktree-combined-validation.md) records the isolated
+desktop lifecycle, issue-to-commit mapping, full checks and platform limits.
