@@ -180,7 +180,7 @@ pub fn worktree_setup(
     };
     let common = candidate.common.clone();
     let result = coordinate_setup(&candidate.path, || {
-        let Some((operation, capacity)) = disk::coordinate(&host.disk, &conn, || {
+        let Some((operation, capacity)) = disk::coordinate(&host.disk, &conn, |measured| {
             let _repository = host.repository_guard(&common)?;
             let mut windows = host.operation_guard()?;
             for changed in super::naming::reconcile_repository(&conn, &common)? {
@@ -198,13 +198,9 @@ pub fn worktree_setup(
                 return Ok(None);
             }
             let scope = environment::scope_for_entry(&conn, &entry)?;
-            let capacity = host.disk.admit(
-                &conn,
-                &entry.path,
-                &scope,
-                "setup",
-                environment::needs_setup(&conn, &path)?,
-            )?;
+            let capacity = host
+                .disk
+                .admit(&conn, &entry.path, &scope, "setup", true, measured)?;
             let operation = match environment::begin_setup(&conn, &path)? {
                 environment::BeginSetup::Skip => {
                     super::naming::emit(&app, super::naming::apply_pending(&conn, &entry.id));

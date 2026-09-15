@@ -15,6 +15,7 @@ use crate::session_store::SessionStore;
 
 pub const GIB: u64 = 1024 * 1024 * 1024;
 const MAX_BYTES: u64 = 1024 * 1024 * GIB;
+const SCAN_CACHE_MS: i64 = 5 * 60 * 1000;
 const RETRY_MEASUREMENT: &str = "WORKTREE_DISK_REMEASURE";
 const FAILURE_PREFIX: &str = "WORKTREE_CAPACITY:";
 const LIMITATIONS: &[&str] = &[
@@ -257,7 +258,7 @@ impl DiskManager {
             self.reconcile(conn, &mut state)?;
             if !refresh {
                 if let Some(cached) = &state.cached {
-                    if now() - cached.measured_at < 30_000 {
+                    if now() - cached.measured_at < SCAN_CACHE_MS {
                         return Ok(cached.clone());
                     }
                 }
@@ -266,7 +267,7 @@ impl DiskManager {
         };
         let ownership = ownership(conn)?;
         before_walk();
-        let snapshot = scan(conn, windows, paths, true)?;
+        let snapshot = scan(conn, windows, paths, !windows.is_empty())?;
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         if state.generation == generation && ownership == self::ownership(conn)? {
             state.cached = Some(snapshot.clone());
@@ -282,7 +283,11 @@ impl DiskManager {
         scope: &environment::ProjectScope,
         operation: &str,
         needs_growth: bool,
+        measured: bool,
     ) -> Result<ReservationLease<'a>, String> {
+        if !measured {
+            return Err(RETRY_MEASUREMENT.into());
+        }
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         let mut snapshot = state.cached.clone().ok_or(RETRY_MEASUREMENT)?;
         // Only cheap identity checks, current policy and journal updates occur
@@ -455,15 +460,16 @@ impl Drop for ReservationLease<'_> {
 pub(super) fn coordinate<T>(
     manager: &DiskManager,
     conn: &Connection,
-    operation: impl Fn() -> Result<T, String>,
+    operation: impl Fn(bool) -> Result<T, String>,
 ) -> Result<T, String> {
     // Ready/local access performs no growth admission and needs no scan. A
     // growing operation asks for measurement before its first mutation.
-    manager.invalidate();
+    let mut measured = false;
     loop {
-        match operation() {
+        match operation(measured) {
             Err(error) if error == RETRY_MEASUREMENT => {
                 manager.snapshot(conn, &HashMap::new(), &[], true)?;
+                measured = true;
             }
             result => return result,
         }
@@ -903,10 +909,22 @@ fn save_settings(
     Ok(next)
 }
 
+fn should_schedule_scan(active: bool, pending: bool) -> bool {
+    active || pending
+}
+
 static SCAN_WORKER: OnceLock<mpsc::SyncSender<()>> = OnceLock::new();
 
 pub(super) fn refresh(app: &AppHandle) {
-    app.state::<WorktreeHost>().disk.invalidate();
+    if app
+        .state::<WorktreeHost>()
+        .disk
+        .state
+        .lock()
+        .is_ok_and(|state| state.cached.is_some())
+    {
+        return;
+    }
     if let Some(worker) = SCAN_WORKER.get() {
         let _ = worker.try_send(());
     }
@@ -930,7 +948,7 @@ pub(super) fn start_monitor(app: &AppHandle) {
                 reap_handoffs(&host.disk, &conn, &windows, now())?;
                 let snapshot =
                     host.disk
-                        .snapshot(&conn, &windows, std::slice::from_ref(&host.root), true)?;
+                        .snapshot(&conn, &windows, std::slice::from_ref(&host.root), false)?;
                 let _ = scan_app.emit("worktree-disk-snapshot", snapshot);
                 Ok(())
             })();
@@ -939,6 +957,9 @@ pub(super) fn start_monitor(app: &AppHandle) {
             }
         }
     });
+    if let Some(worker) = SCAN_WORKER.get() {
+        let _ = worker.try_send(());
+    }
     let app = app.clone();
     std::thread::spawn(move || loop {
         let result = (|| -> Result<(), String> {
@@ -951,6 +972,7 @@ pub(super) fn start_monitor(app: &AppHandle) {
             }
             paths.extend(app.state::<crate::harness::HarnessHost>().active_workdirs());
             paths.extend(app.state::<crate::pty::PtyHost>().active_workdirs());
+            let active = paths.len() > 1;
             for entry in owned(&conn)? {
                 paths.extend([PathBuf::from(entry.path), PathBuf::from(entry.common)]);
             }
@@ -964,17 +986,20 @@ pub(super) fn start_monitor(app: &AppHandle) {
             let mut seen = HashSet::new();
             let mut volumes = vec![];
             for path in &paths {
-                let v = volume(path)?;
-                if seen.insert(v.id.clone()) {
-                    volumes.push(v);
+                let ancestor = existing_ancestor(path)?;
+                let metadata = std::fs::metadata(&ancestor).map_err(|e| e.to_string())?;
+                if seen.insert(volume_id(&ancestor, &metadata)?) {
+                    volumes.push(volume(&ancestor)?);
                 }
             }
             let _ = app.emit(
                 "worktree-disk-pressure",
                 serde_json::json!({"settings": settings, "volumes": volumes, "measuredAt": now()}),
             );
-            if let Some(worker) = SCAN_WORKER.get() {
-                let _ = worker.try_send(());
+            if should_schedule_scan(active, !reservations(&conn, &[])?.is_empty()) {
+                if let Some(worker) = SCAN_WORKER.get() {
+                    let _ = worker.try_send(());
+                }
             }
             Ok(())
         })();

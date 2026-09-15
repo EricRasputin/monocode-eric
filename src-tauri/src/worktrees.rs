@@ -3486,10 +3486,12 @@ fn create(
     id: &str,
     name: &str,
     base_ref: Option<&str>,
+    measured: bool,
 ) -> Result<Owned, String> {
-    create_with_naming(conn, host, cwd, id, name, base_ref, None)
+    create_with_naming(conn, host, cwd, id, name, base_ref, None, measured)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_with_naming(
     conn: &Connection,
     host: &WorktreeHost,
@@ -3498,6 +3500,7 @@ fn create_with_naming(
     name: &str,
     base_ref: Option<&str>,
     auto_name_token: Option<&str>,
+    measured: bool,
 ) -> Result<Owned, String> {
     validate_id(id)?;
     if let Some(token) = auto_name_token {
@@ -3549,7 +3552,7 @@ fn create_with_naming(
     let project_scope = environment::scope_for_cwd(cwd)?;
     let _capacity = host
         .disk
-        .admit(conn, &path, &project_scope, "create", true)?;
+        .admit(conn, &path, &project_scope, "create", true, measured)?;
     let creation_ref = ensure_creation_ref(Path::new(&repo), id, &commit)?;
     // Persist ownership and pending setup together before creating files. A
     // crash after Git succeeds must not turn the next open into a setup skip.
@@ -3955,11 +3958,19 @@ pub fn worktree_create(
     base_ref: Option<String>,
 ) -> Result<String, disk::WorkspaceError> {
     let conn = store.open_auxiliary_conn()?;
-    let result = disk::coordinate(&host.disk, &conn, || {
+    let result = disk::coordinate(&host.disk, &conn, |measured| {
         let common = repository_common(&cwd)?;
         let _repository = host.repository_guard(&common)?;
         let mut windows = host.operation_guard()?;
-        let entry = create(&conn, &host, &cwd, &session_id, &name, base_ref.as_deref())?;
+        let entry = create(
+            &conn,
+            &host,
+            &cwd,
+            &session_id,
+            &name,
+            base_ref.as_deref(),
+            measured,
+        )?;
         windows
             .entry(window.label().into())
             .or_default()
@@ -3994,14 +4005,14 @@ pub fn worktree_prepare(
     request: PrepareWorktree,
 ) -> Result<Option<String>, disk::WorkspaceError> {
     let conn = store.open_auxiliary_conn()?;
-    let result = disk::coordinate(&host.disk, &conn, || {
+    let result = disk::coordinate(&host.disk, &conn, |measured| {
         let common = preparation_common(&conn, &request)?;
         let _repository = host.repository_guard(&common)?;
         let mut windows = host.operation_guard()?;
         for changed in naming::reconcile_repository(&conn, &common)? {
             naming::emit(window.app_handle(), Ok(Some(changed)));
         }
-        let work_path = prepare(&conn, &host, request.clone())?;
+        let work_path = prepare(&conn, &host, request.clone(), measured)?;
         if let Some(path) = &work_path {
             let leases = windows.entry(window.label().into()).or_default();
             let path = PathBuf::from(path);
@@ -4042,6 +4053,7 @@ fn prepare(
     conn: &Connection,
     host: &WorktreeHost,
     request: PrepareWorktree,
+    measured: bool,
 ) -> Result<Option<String>, String> {
     let PrepareWorktree {
         cwd,
@@ -4069,7 +4081,7 @@ fn prepare(
         let _capacity = if !Path::new(&entry.path).exists() {
             Some(
                 host.disk
-                    .admit(conn, &entry.path, &scope, "restore", true)?,
+                    .admit(conn, &entry.path, &scope, "restore", true, measured)?,
             )
         } else {
             None
@@ -4132,6 +4144,7 @@ fn prepare(
                 &name,
                 base_ref.as_deref(),
                 auto_name_token.as_deref(),
+                measured,
             )?
             .path,
         )?)
@@ -4251,6 +4264,7 @@ pub fn worktree_retire(
         &plan_id,
         &selections,
     );
+    host.disk.invalidate();
     disk::refresh(&app);
     let _ = app.emit("worktree-storage-changed", ());
     storage_maintenance::schedule(&app);
@@ -4290,8 +4304,8 @@ mod tests {
         name: &str,
         base_ref: Option<&str>,
     ) -> Result<Owned, String> {
-        disk::coordinate(&host.disk, conn, || {
-            super::create(conn, host, cwd, id, name, base_ref)
+        disk::coordinate(&host.disk, conn, |measured| {
+            super::create(conn, host, cwd, id, name, base_ref, measured)
         })
     }
     pub(super) fn prepare(
@@ -4299,8 +4313,8 @@ mod tests {
         host: &WorktreeHost,
         request: PrepareWorktree,
     ) -> Result<Option<String>, String> {
-        disk::coordinate(&host.disk, conn, || {
-            super::prepare(conn, host, request.clone())
+        disk::coordinate(&host.disk, conn, |measured| {
+            super::prepare(conn, host, request.clone(), measured)
         })
     }
 
@@ -4370,10 +4384,10 @@ mod tests {
             )
             .unwrap();
             let scope = environment::scope_for_entry(&self.conn, &entry).unwrap();
-            let _capacity = disk::coordinate(&self.host.disk, &self.conn, || {
+            let _capacity = disk::coordinate(&self.host.disk, &self.conn, |measured| {
                 self.host
                     .disk
-                    .admit(&self.conn, &entry.path, &scope, "setup", true)
+                    .admit(&self.conn, &entry.path, &scope, "setup", true, measured)
             })
             .unwrap();
             if let environment::BeginSetup::Run(operation) =

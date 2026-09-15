@@ -87,3 +87,10 @@ An optional layout preview is available with `npm run dev:worktrees` at <http://
 The native verification page at `/dev/worktree-native.html` accepts only temporary fixture repositories matching `/tmp/monocode-retirement-native-*/repo` (or `/private/tmp/...`). **Read saved conversation 1** displays history without preparing it; **Restore conversation 1** uses the production preparation interface. Never point lifecycle tests at live user worktrees. Automated native tests create their own temporary Git repositories and SQLite databases.
 
 For a mocked history/retry preview, open `/dev/worktrees.html?history=1`. Toggle the setup failure control, read the saved conversation, then restore it to inspect the archived/active transition. Reloading this preview returns to the saved transcript fixture.
+
+## Checkout disk capacity
+
+See [Managed checkout disk capacity](disk-management.md) for the 30 GiB managed
+checkout budget, 10 GiB per-volume reserve, 5 GiB initial allowance, accounting
+limits, reservations, and pressure warnings. These are separate from configuration
+recovery storage. Ready workspaces remain usable when capacity is tight.

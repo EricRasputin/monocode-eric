@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { invokeWorkspace } from "./worktreeDisk";
 import type { Session } from "./session";
 import { isPlanTab, isReleaseNotesTab, type WorkspaceTab } from "./layout";
 import type { ProjectTerminalDock } from "./projectTerminal";
@@ -115,14 +116,14 @@ export const listWorktrees = (cwd: string) =>
 export const saveWorktreeSettings = (cwd: string, settings: WorktreeSettings) =>
   invoke<WorktreeSettings>("worktree_settings_set", { cwd, settings });
 export const setupWorktree = (path: string) =>
-  invoke<void>("worktree_setup", { path });
+  invokeWorkspace<void>("worktree_setup", { path });
 export const createWorktree = async (
   cwd: string,
   sessionId: string,
   name: string,
   baseRef: string,
 ) => {
-  const path = await invoke<string>("worktree_create", {
+  const path = await invokeWorkspace<string>("worktree_create", {
     cwd,
     sessionId,
     name,
@@ -194,7 +195,7 @@ export async function prepareSessionWorktree(
 ): Promise<string | null> {
   if (session.inboxAsk || session.cwd === "~") return null;
   const path = await queueWorkspaceLease(async () => {
-    const located = await invoke<string | null>("worktree_prepare", {
+    const located = await invokeWorkspace<string | null>("worktree_prepare", {
       request: {
         cwd: session.cwd,
         sessionId: session.id,

@@ -21,6 +21,7 @@ import {
   prepareProviderWorkspace,
 } from "./lib/sessionWorkspace";
 import { WorktreeRetirementDialog } from "./chrome/WorktreeRetirementDialog";
+import { WorktreeDiskPressure } from "./chrome/WorktreeDiskPressure";
 import { AppToaster } from "./chrome/AppToaster";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
@@ -7300,6 +7301,7 @@ export default function App({
                 onSelectProject={onSelectProject}
               />
 
+              <WorktreeDiskPressure onOpenSettings={() => openSettings("worktrees")} />
               <main className="relative min-h-0 min-w-0 flex-1">
                 <div
                   ref={dockGridRef}

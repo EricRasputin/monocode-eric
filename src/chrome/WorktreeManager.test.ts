@@ -27,6 +27,10 @@ vi.mock("../lib/worktrees", async (importOriginal) => ({
   saveWorktreeSettings: vi.fn(),
   pinWorktree: vi.fn(),
 }));
+vi.mock("./WorktreeDiskSettings", () => ({
+  WorktreeDiskSettings: () =>
+    createElement("div", {}, "Checkout disk capacity"),
+}));
 vi.mock("./WorktreeRecoveryStorage", () => ({
   WorktreeRecoveryStorage: vi.fn(({ projectCwd }: { projectCwd: string }) =>
     createElement(

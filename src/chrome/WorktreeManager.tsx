@@ -32,6 +32,7 @@ import {
 import { refreshWorktrees, useWorktrees } from "../hooks/useWorktrees";
 import { WorktreeRetirementDialog } from "./WorktreeRetirementDialog";
 import { WorktreeEnvironmentSettings } from "./WorktreeEnvironmentSettings";
+import { WorktreeDiskSettings } from "./WorktreeDiskSettings";
 import { WorktreeRecoveryStorage } from "./WorktreeRecoveryStorage";
 
 const button =
@@ -88,24 +89,30 @@ export function WorktreeManager({
     projects[0];
   if (!selected) {
     return (
-      <p className="text-sm text-content/60">
-        Open a Git project to review its worktrees. Projects you open will
-        appear here.
-      </p>
+      <div className="space-y-6">
+        <WorktreeDiskSettings />
+        <p className="text-sm text-content/60">
+          Open a Git project to review its worktrees. Projects you open will
+          appear here.
+        </p>
+      </div>
     );
   }
   return (
-    <ProjectWorktreeCleanup
-      key={projectKey(selected.path)}
-      cwd={selected.path}
-      projects={projects}
-      focusPicker={focusPicker}
-      onSelectProject={(key) => {
-        setSelectedKey(key);
-        setFocusPicker(true);
-      }}
-      onOpen={(worktreeCwd) => onOpen(selected.path, worktreeCwd)}
-    />
+    <div className="space-y-6">
+      <WorktreeDiskSettings />
+      <ProjectWorktreeCleanup
+        key={projectKey(selected.path)}
+        cwd={selected.path}
+        projects={projects}
+        focusPicker={focusPicker}
+        onSelectProject={(key) => {
+          setSelectedKey(key);
+          setFocusPicker(true);
+        }}
+        onOpen={(worktreeCwd) => onOpen(selected.path, worktreeCwd)}
+      />
+    </div>
   );
 }
 

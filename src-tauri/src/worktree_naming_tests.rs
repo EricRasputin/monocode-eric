@@ -142,7 +142,7 @@ fn naming_serializes_two_windows_competing_for_the_same_branch() {
 }
 
 fn draft(f: &Fixture, id: &str) -> Owned {
-    crate::worktrees::disk::coordinate(&f.host.disk, &f.conn, || {
+    crate::worktrees::disk::coordinate(&f.host.disk, &f.conn, |measured| {
         create_with_naming(
             &f.conn,
             &f.host,
@@ -151,6 +151,7 @@ fn draft(f: &Fixture, id: &str) -> Owned {
             "Raw verbose request",
             Some("main"),
             Some(TOKEN),
+            measured,
         )
     })
     .unwrap()

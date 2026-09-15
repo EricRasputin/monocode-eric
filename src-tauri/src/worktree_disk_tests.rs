@@ -8,8 +8,8 @@ fn admit<'a>(
     operation: &str,
     growth: bool,
 ) -> Result<ReservationLease<'a>, String> {
-    coordinate(manager, conn, || {
-        manager.admit(conn, path, scope, operation, growth)
+    coordinate(manager, conn, |measured| {
+        manager.admit(conn, path, scope, operation, growth, measured)
     })
 }
 
@@ -424,8 +424,16 @@ fn slow_scan_does_not_hold_conversation_writer_or_window_heartbeat() {
             written_tx.send(()).unwrap();
         });
         let wrote_while_scanning = written_rx.recv_timeout(Duration::from_secs(2));
+        coordinate(&f.host.disk, &f.conn, |_| {
+            release_handoff(&f.host.disk, &f.conn, "/ready-unrelated")
+        })
+        .unwrap();
         resume_tx.send(()).unwrap();
         scanner.join().unwrap();
+        assert!(
+            f.host.disk.state.lock().unwrap().cached.is_some(),
+            "ready access invalidated an in-flight scan"
+        );
         assert!(
             wrote_while_scanning.is_ok(),
             "scan blocked database writer or heartbeat"
@@ -491,7 +499,7 @@ fn admission_rechecks_settings_journal_and_root_identity_after_measurement() {
     let error = f
         .host
         .disk
-        .admit(&f.conn, &entry.path, &scope, "setup", true)
+        .admit(&f.conn, &entry.path, &scope, "setup", true, true)
         .err()
         .unwrap();
     assert!(matches!(
@@ -503,7 +511,7 @@ fn admission_rechecks_settings_journal_and_root_identity_after_measurement() {
     assert_eq!(
         f.host
             .disk
-            .admit(&f.conn, &entry.path, &scope, "setup", true)
+            .admit(&f.conn, &entry.path, &scope, "setup", true, true)
             .err()
             .unwrap(),
         RETRY_MEASUREMENT
@@ -539,7 +547,7 @@ fn ready_workspace_access_is_allowed_under_pressure_but_pending_setup_is_checked
     .unwrap();
     assert!(!environment::needs_setup(&f.conn, &entry.path).unwrap());
     // Native ready-access path never requests measurement or admission.
-    coordinate(&f.host.disk, &f.conn, || {
+    coordinate(&f.host.disk, &f.conn, |_| {
         super::super::setup::validate_checkout(&entry, &entry.path)?;
         release_handoff(&f.host.disk, &f.conn, &entry.path)
     })
@@ -572,4 +580,82 @@ fn abandoned_handoff_expires_in_live_app_only_after_grace_and_last_lease() {
     reap_handoffs(&f.host.disk, &f.conn, &HashMap::new(), time + 60_000).unwrap();
     assert!(reservations(&f.conn, &[]).unwrap().is_empty());
     assert!(Path::new(&entry.path).exists());
+}
+
+#[test]
+fn ready_access_reuses_cache_and_idle_monitor_does_not_schedule_traversals() {
+    let f = Fixture::new();
+    let entry = f.create("cached-ready");
+    let initial = f
+        .host
+        .disk
+        .snapshot(&f.conn, &HashMap::new(), &[], true)
+        .unwrap();
+    let generation = f.host.disk.state.lock().unwrap().generation;
+    for _ in 0..3 {
+        coordinate(&f.host.disk, &f.conn, |measured| {
+            assert!(!measured);
+            release_handoff(&f.host.disk, &f.conn, &entry.path)
+        })
+        .unwrap();
+        let cached = f
+            .host
+            .disk
+            .measure_with(&f.conn, &HashMap::new(), &[], false, || {
+                panic!("ready access started a traversal")
+            })
+            .unwrap();
+        assert_eq!(cached.measured_at, initial.measured_at);
+    }
+    assert_eq!(f.host.disk.state.lock().unwrap().generation, generation);
+    assert!(!should_schedule_scan(false, false));
+    assert!(should_schedule_scan(true, false));
+    assert!(should_schedule_scan(false, true));
+    f.host
+        .disk
+        .state
+        .lock()
+        .unwrap()
+        .cached
+        .as_mut()
+        .unwrap()
+        .measured_at = now() - SCAN_CACHE_MS;
+    let scans = std::cell::Cell::new(0);
+    for _ in 0..2 {
+        f.host
+            .disk
+            .measure_with(&f.conn, &HashMap::new(), &[], false, || {
+                scans.set(scans.get() + 1)
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        scans.get(),
+        1,
+        "queued refreshes should share the completed scan"
+    );
+}
+
+#[test]
+fn reclaimable_estimates_require_a_window_snapshot_and_exclude_active_paths() {
+    let f = Fixture::new();
+    let entry = f.create("reclaimable-view");
+    let admission = f
+        .host
+        .disk
+        .snapshot(&f.conn, &HashMap::new(), &[], true)
+        .unwrap();
+    assert_eq!(admission.reclaimable_bytes, 0);
+    let idle = HashMap::from([("native-processes".into(), Vec::new())]);
+    let snapshot = f.host.disk.snapshot(&f.conn, &idle, &[], true).unwrap();
+    assert!(snapshot.reclaimable_bytes > 0);
+    let active = HashMap::from([("editor-window".into(), vec![PathBuf::from(&entry.path)])]);
+    assert_eq!(
+        f.host
+            .disk
+            .snapshot(&f.conn, &active, &[], true)
+            .unwrap()
+            .reclaimable_bytes,
+        0
+    );
 }
