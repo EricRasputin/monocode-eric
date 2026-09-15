@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatSessionTitle } from "../lib/session";
 import { formatReminderTime } from "../lib/sessionReminders";
 import { Sidebar } from "./Sidebar";
+import { FileTree } from "./FileTree";
 
 // Keep native services out of these menu/input interaction tests.
 vi.mock("../hooks/useProjectDiffStats", () => ({
@@ -14,7 +15,7 @@ vi.mock("../hooks/useGitFileStatuses", () => ({
   useGitFileStatuses: () => ({ files: new Map(), dirs: new Map() }),
 }));
 vi.mock("./SidebarUpdate", () => ({ SidebarUpdateFooter: () => null }));
-vi.mock("./FileTree", () => ({ FileTree: () => null }));
+vi.mock("./FileTree", () => ({ FileTree: vi.fn(() => null) }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -133,6 +134,23 @@ afterEach(() => {
 });
 
 describe("sidebar session rename", () => {
+  it("keeps the hidden file browser unmounted while reading saved history", () => {
+    vi.mocked(FileTree).mockClear();
+    const prepare = vi.fn();
+    props = { ...props, transcriptOnly: true, gitCwd: "/retired", onPrepareWorkspace: prepare };
+    act(() => render());
+    expect(FileTree).not.toHaveBeenCalled();
+    props = { ...props, tab: "files" };
+    act(() => render());
+    expect(FileTree).not.toHaveBeenCalled();
+    const button = [...container.querySelectorAll("button")].find((button) => button.textContent === "Prepare workspace to browse files")!;
+    act(() => button.click());
+    expect(prepare).toHaveBeenCalledOnce();
+    props = { ...props, transcriptOnly: false };
+    act(() => render());
+    expect(FileTree).toHaveBeenCalled();
+  });
+
   it.each(["idle", "working", "needs approval"])(
     "renames from the menu and restores navigation (status=%s)",
     (status) => {

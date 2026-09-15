@@ -1,3 +1,4 @@
+import { useComposerFiles } from "./useComposerFiles";
 import { WorkspacePicker } from "./WorkspacePicker";
 import type { Session, WorkspaceChoice } from "../lib/session";
 import {
@@ -41,10 +42,8 @@ import {
 import { resizeComposer } from "../lib/composerResize";
 import type { ContextUsage } from "../lib/contextUsage";
 import {
-  loadProjectFiles,
   peekProjectFiles,
   recentOpenedFiles,
-  subscribeProjectFiles,
 } from "../lib/fileIndex";
 import {
   buildMentionIndex,
@@ -154,6 +153,7 @@ type Props = {
   branch?: string;
   workspaceSession?: Session;
   onWorkspaceChange?: (choice: WorkspaceChoice) => void;
+  onPrepareWorkspace?: () => Promise<string>;
   recents?: RecentProject[];
   hideProjectPicker?: boolean;
   hideBranchPicker?: boolean;
@@ -413,6 +413,7 @@ export function Composer({
   branch,
   workspaceSession,
   onWorkspaceChange,
+  onPrepareWorkspace,
   recents = [],
   hideProjectPicker = false,
   hideBranchPicker = false,
@@ -483,9 +484,6 @@ export function Composer({
   const [sessionFolderSelected, setSessionFolderSelected] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
-  const [files, setFiles] = useState<ProjectFile[]>(
-    () => peekProjectFiles(cwd) ?? [],
-  );
   const notesEnabled = useSyncExternalStore(
     subscribeNotesEnabled,
     loadNotesEnabled,
@@ -513,6 +511,11 @@ export function Composer({
 
   const mentionOpen =
     mention !== null && (looksLikeProject(cwd) || notesEnabled);
+  const files = useComposerFiles(
+    executionCwd,
+    !workspaceSession?.transcriptOnly,
+    mentionOpen,
+  );
   const navigationEmpty =
     draft.length === 0 &&
     attachments.length === 0 &&
@@ -526,7 +529,18 @@ export function Composer({
     executionCwd,
     sessionId,
     pickerOpen,
+    enabled: !workspaceSession?.transcriptOnly,
   });
+  useEffect(() => {
+    if (!workspaceSession?.transcriptOnly || (!pickerOpen && !mentionOpen))
+      return;
+    void onPrepareWorkspace?.().catch(() => undefined);
+  }, [
+    workspaceSession?.transcriptOnly,
+    pickerOpen,
+    mentionOpen,
+    onPrepareWorkspace,
+  ]);
   const skills = skillCatalog.skills;
   const slashItems = useMemo(
     () => [
@@ -663,26 +677,6 @@ export function Composer({
       rankedSkills.length === 0 ? 0 : Math.min(index, rankedSkills.length - 1),
     );
   }, [rankedSkills.length]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const apply = (next: ProjectFile[]) => {
-      if (!cancelled) setFiles(next);
-    };
-    const cached = peekProjectFiles(cwd);
-    if (cached) apply(cached);
-    void loadProjectFiles(cwd, mentionOpen)
-      .then(apply)
-      .catch(() => undefined);
-    const unsub = subscribeProjectFiles(() => {
-      const next = peekProjectFiles(cwd);
-      if (next) apply(next);
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [cwd, mentionOpen]);
 
   useEffect(() => {
     if (!mentionOpen || !notesEnabled) return;
@@ -1288,7 +1282,11 @@ export function Composer({
               files={rankedFiles}
               query={mention?.query ?? ""}
               active={mentionActive}
-              loading={looksLikeProject(cwd) && peekProjectFiles(cwd) == null}
+              loading={
+                looksLikeProject(executionCwd) &&
+                (workspaceSession?.transcriptOnly ||
+                  peekProjectFiles(executionCwd) == null)
+              }
               includeNotes={notesEnabled}
               onActive={setMentionActive}
               onPick={pickMention}

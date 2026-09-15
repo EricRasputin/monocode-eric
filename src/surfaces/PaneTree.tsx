@@ -61,6 +61,7 @@ type Shared = {
   onCwdChange: (sessionId: string, cwd: string) => void;
   onBranchChange: (sessionId: string) => void;
   onWorkspaceChange?: (sessionId: string, choice: WorkspaceChoice) => void;
+  onPrepareWorkspace?: (sessionId: string) => Promise<string>;
   onModelChange: (sessionId: string, harness: HarnessId, model: string) => void;
   onModelSettingsChange: (
     sessionId: string,
@@ -170,6 +171,7 @@ function PaneTreeComponent({
   onCwdChange,
   onBranchChange,
   onWorkspaceChange,
+  onPrepareWorkspace,
   onModelChange,
   onModelSettingsChange,
   onRuntimeModeChange,
@@ -389,6 +391,7 @@ function PaneTreeComponent({
                 onClose={onClose}
                 onCwdChange={onCwdChange}
                 onWorkspaceChange={onWorkspaceChange}
+                onPrepareWorkspace={onPrepareWorkspace}
                 onBranchChange={onBranchChange}
                 onModelChange={onModelChange}
                 onModelSettingsChange={onModelSettingsChange}

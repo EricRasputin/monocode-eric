@@ -3983,10 +3983,10 @@ pub fn worktree_prepare(
     host: State<'_, WorktreeHost>,
     request: PrepareWorktree,
 ) -> Result<Option<String>, String> {
-    let common = repository_common(&request.cwd)?;
+    let conn = store.open_auxiliary_conn()?;
+    let common = preparation_common(&conn, &request)?;
     let _repository = host.repository_guard(&common)?;
     let mut windows = host.operation_guard()?;
-    let conn = store.open_auxiliary_conn()?;
     for changed in naming::reconcile_repository(&conn, &common)? {
         naming::emit(window.app_handle(), Ok(Some(changed)));
     }
@@ -4000,6 +4000,30 @@ pub fn worktree_prepare(
     }
     Ok(work_path)
 }
+/// Standalone filesystem access may start in a missing managed checkout or a
+/// plain folder. Resolve ownership before asking Git about a directory that
+/// retirement removed. Unmanaged local access must not require a Git repository.
+fn preparation_common(conn: &Connection, request: &PrepareWorktree) -> Result<String, String> {
+    if let Some(entry) = owned(conn)?
+        .iter()
+        .find(|entry| path_inside(&expand_home(&request.cwd), Path::new(&entry.path)))
+    {
+        return Ok(entry.common.clone());
+    }
+    repository_common(&request.cwd).or_else(|error| {
+        if request.use_worktree != Some(false)
+            || request.path.as_deref() != Some(request.cwd.as_str())
+        {
+            return Err(error);
+        }
+        let path = std::fs::canonicalize(expand_home(&request.cwd)).map_err(|e| e.to_string())?;
+        if !path.is_dir() {
+            return Err("Workspace access requires a directory".into());
+        }
+        Ok(path_to_js(&path))
+    })
+}
+
 fn prepare(
     conn: &Connection,
     host: &WorktreeHost,
@@ -4022,7 +4046,9 @@ fn prepare(
             || (path.is_none() && v.id == session_id)
     });
     let work_path = if let Some(entry) = entry {
-        if repository(&cwd)?.1 != entry.common {
+        if !path_inside(&expand_home(&cwd), Path::new(&entry.path))
+            && repository(&cwd)?.1 != entry.common
+        {
             return Err("Worktree does not belong to this project".into());
         }
         open_owned(conn, entry)?;
@@ -4038,10 +4064,18 @@ fn prepare(
         };
         Some(target)
     } else if let Some(path) = path {
+        let target = std::fs::canonicalize(expand_home(&path))
+            .map_err(|e| format!("Worktree unavailable: {e}"))?;
+        if !target.is_dir() {
+            return Err("Workspace access requires a directory".into());
+        }
+        let canonical = path_to_js(&target);
+        // This is an explicit local directory, not a failed managed recovery.
+        // Keep file/editor and terminal access working outside Git repositories.
+        if use_worktree == Some(false) && path == cwd && repository(&cwd).is_err() {
+            return Ok(Some(canonical));
+        }
         let (_, common) = repository(&cwd)?;
-        let canonical = path_to_js(
-            &std::fs::canonicalize(&path).map_err(|e| format!("Worktree unavailable: {e}"))?,
-        );
         if repository(&canonical)?.1 != common
             || !checkouts(&expand_home(&cwd))?
                 .iter()

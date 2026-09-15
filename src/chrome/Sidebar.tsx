@@ -182,6 +182,8 @@ type Props = {
   cwd: string;
   /** Working copy for Changes / explorer git. Falls back to `cwd`. */
   gitCwd?: string;
+  transcriptOnly?: boolean;
+  onPrepareWorkspace?: () => void;
   open: boolean;
   sessions: SessionSummary[];
   busySessionIds: Set<string>;
@@ -272,6 +274,8 @@ type Props = {
 function SidebarComponent({
   cwd,
   gitCwd,
+  transcriptOnly = false,
+  onPrepareWorkspace,
   open,
   sessions,
   busySessionIds,
@@ -550,8 +554,8 @@ function SidebarComponent({
     !notesActive &&
     !settingsOpen &&
     inProject;
-  const gitStatuses = useGitFileStatuses(gitRoot, open && tab === "files");
-  const changeStats = useProjectDiffStats(gitRoot, open);
+  const gitStatuses = useGitFileStatuses(gitRoot, !transcriptOnly && open && tab === "files");
+  const changeStats = useProjectDiffStats(gitRoot, !transcriptOnly && open);
 
   useEffect(() => {
     setSessionListLimit(LIST_PAGE_SIZE);
@@ -1215,7 +1219,9 @@ function SidebarComponent({
             tab === "files" ? "" : "hidden"
           }`}
         >
-          {filesSearchOpen ? (
+          {transcriptOnly ? (
+            <button className="m-3 rounded border border-content/10 p-3 text-xs" onClick={onPrepareWorkspace}>Prepare workspace to browse files</button>
+          ) : filesSearchOpen ? (
             <ProjectSearch
               cwd={gitRoot}
               focusToken={searchFocusToken}
@@ -1545,7 +1551,9 @@ function SidebarComponent({
             </div>
           )}
         </div>
-        {tab === "changes" ? (
+        {tab === "changes" && transcriptOnly ? (
+          <button className="m-3 rounded border border-content/10 p-3 text-xs" onClick={onPrepareWorkspace}>Prepare workspace to view changes</button>
+        ) : tab === "changes" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <SourceControl
               cwd={gitRoot}

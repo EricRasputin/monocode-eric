@@ -8,7 +8,23 @@ import { canChooseWorkspace, worktreeProjectPath } from "../lib/worktrees";
 import { useWorktrees } from "../hooks/useWorktrees";
 import { useProjectBranchesState } from "../hooks/useProjectBranches";
 
-export function WorkspacePicker({
+export function WorkspacePicker(
+  props: Parameters<typeof ActiveWorkspacePicker>[0],
+) {
+  if (props.session.transcriptOnly)
+    return (
+      <span
+        className="text-xs text-content/60"
+        title={sessionWorkCwd(props.session)}
+      >
+        Saved workspace
+        {props.session.branch ? ` · ${props.session.branch}` : ""}
+      </span>
+    );
+  return <ActiveWorkspacePicker {...props} />;
+}
+
+function ActiveWorkspacePicker({
   session,
   enabled,
   onChange,

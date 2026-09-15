@@ -76,6 +76,11 @@ function button(label: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(invoke).mockImplementation(async (command, args) =>
+    command === "worktree_prepare"
+      ? (args as { request: { path: string | null } }).request.path
+      : null,
+  );
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   Element.prototype.scrollIntoView = vi.fn();
   container = document.createElement("div");
@@ -88,6 +93,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("composer workspace choice", () => {
+  it("shows the saved worktree identity without mounting Git controls", async () => {
+    const initial = {
+      ...newSession("claude", "/repo"),
+      transcriptOnly: true,
+      worktreeCwd: "/retired",
+      branch: "saved-branch",
+    };
+    await act(async () => root.render(createElement(Harness, { initial })));
+    expect(container.textContent).toContain("Saved workspace · saved-branch");
+    expect(container.querySelector("[title='/retired']")).not.toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(gitCheckout).not.toHaveBeenCalled();
+  });
+
   it("chooses a base without checking out the source, then uses it on first send", async () => {
     await act(async () => root.render(createElement(Harness)));
     expect(button("Workspace: New worktree")).toBeDefined();
@@ -115,13 +135,13 @@ describe("composer workspace choice", () => {
     await act(async () => button("Workspace: New worktree").click());
     await act(async () => button("Current checkout").click());
     await prepareSessionWorktree(latest);
-    expect(invoke).toHaveBeenLastCalledWith("worktree_prepare", {
+    expect(invoke).toHaveBeenCalledWith("worktree_prepare", {
       request: expect.objectContaining({ createNew: false, path: "/repo" }),
     });
     await act(async () => button("Workspace: Current checkout").click());
     await act(async () => button("feature/existing").click());
     await prepareSessionWorktree(latest);
-    expect(invoke).toHaveBeenLastCalledWith("worktree_prepare", {
+    expect(invoke).toHaveBeenCalledWith("worktree_prepare", {
       request: expect.objectContaining({ createNew: false, path: "/existing" }),
     });
   });
@@ -141,7 +161,7 @@ describe("composer workspace choice", () => {
       path: "/existing/apps/web",
     });
     await prepareSessionWorktree(latest);
-    expect(invoke).toHaveBeenLastCalledWith("worktree_prepare", {
+    expect(invoke).toHaveBeenCalledWith("worktree_prepare", {
       request: expect.objectContaining({
         cwd: "/repo/apps/web",
         createNew: false,

@@ -1,3 +1,4 @@
+import type { OpenFileFn } from "../lib/search";
 import type { WorkspaceChoice } from "../lib/session";
 import { ChevronDown, GripVertical, X } from "../chrome/icons";
 import {
@@ -77,6 +78,7 @@ type Props = {
   onCwdChange: (sessionId: string, cwd: string) => void;
   onBranchChange: (sessionId: string) => void;
   onWorkspaceChange?: (sessionId: string, choice: WorkspaceChoice) => void;
+  onPrepareWorkspace?: (sessionId: string) => Promise<string>;
   onModelChange: (sessionId: string, harness: HarnessId, model: string) => void;
   onModelSettingsChange: (
     sessionId: string,
@@ -122,7 +124,7 @@ type Props = {
     reply: UserQuestionReply,
   ) => void;
   onQuestionInteraction?: (sessionId: string, requestId: number) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: OpenFileFn;
   onOpenDiff: (
     path?: string,
     session?: { sessionId: string; cwd: string },
@@ -164,6 +166,7 @@ export const SessionPane = memo(function SessionPane({
   onCwdChange,
   onBranchChange,
   onWorkspaceChange,
+  onPrepareWorkspace,
   onModelChange,
   onModelSettingsChange,
   onRuntimeModeChange,
@@ -331,6 +334,14 @@ export const SessionPane = memo(function SessionPane({
     window.addEventListener(ADD_TO_CHAT_EVENT, onAdd);
     return () => window.removeEventListener(ADD_TO_CHAT_EVENT, onAdd);
   }, [addSelectionToChat, addToChatTarget]);
+  const prepareWorkspace = useCallback(
+    () =>
+      onPrepareWorkspace?.(session.id) ??
+      Promise.resolve(sessionWorkCwd(session)),
+    [onPrepareWorkspace, session],
+  );
+  const openSessionFile: OpenFileFn = (path, navigation, options) =>
+    onOpenFile(path, navigation, { ...options, sessionId: session.id });
   const workCwd = sessionWorkCwd(session);
   const showDeckProjectPicker = isEmpty && !looksLikeProject(session.cwd);
   const dockComposer = !isEmpty || inSplit || !!session.inboxAsk;
@@ -347,6 +358,7 @@ export const SessionPane = memo(function SessionPane({
       runtimeMode={session.runtimeMode}
       cwd={session.cwd}
       executionCwd={workCwd}
+      onPrepareWorkspace={prepareWorkspace}
       sessionId={session.id}
       compactSupported={canCompactHarnessContext(session.harness)}
       recents={recents}
@@ -380,7 +392,11 @@ export const SessionPane = memo(function SessionPane({
       onFocus={() => onFocus(session.id)}
       onCwdChange={(cwd) => onCwdChange(session.id, cwd)}
       workspaceSession={session}
-      onWorkspaceChange={onWorkspaceChange ? (choice) => onWorkspaceChange(session.id, choice) : undefined}
+      onWorkspaceChange={
+        onWorkspaceChange
+          ? (choice) => onWorkspaceChange(session.id, choice)
+          : undefined
+      }
       onBranchChange={() => onBranchChange(session.id)}
       onNewTerminal={() => onNewTerminal(session.id)}
       onModelChange={(harness, model) => {
@@ -416,7 +432,7 @@ export const SessionPane = memo(function SessionPane({
         onSteerQueuedMessage(session.id, messageId)
       }
       onResumeQueue={() => onResumeQueue(session.id)}
-      onOpenFile={onOpenFile}
+      onOpenFile={openSessionFile}
       busy={!!session.busy}
     />
   );
@@ -482,6 +498,19 @@ export const SessionPane = memo(function SessionPane({
         </div>
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {session.transcriptOnly ? (
+          <div className="flex items-center gap-3 px-4 py-2 text-xs text-content/60">
+            <span>Saved conversation · workspace not in use</span>
+            <button
+              className="text-accent"
+              onClick={() => {
+                void prepareWorkspace().catch(() => undefined);
+              }}
+            >
+              Restore workspace
+            </button>
+          </div>
+        ) : null}
         <div
           ref={transcriptScope}
           className="@container relative min-h-0 flex-1"
@@ -543,7 +572,7 @@ export const SessionPane = memo(function SessionPane({
                 onSaveSelectionNote={
                   notesEnabled ? saveSelectionNote : undefined
                 }
-                onOpenFile={onOpenFile}
+                onOpenFile={openSessionFile}
                 onOpenDiff={onOpenDiff}
                 onOpenPlan={openPlan}
                 onBuildPlan={buildPlan}
@@ -567,7 +596,7 @@ export const SessionPane = memo(function SessionPane({
                     <SessionReview
                       sessionId={session.id}
                       cwd={workCwd}
-                      enabled={visible}
+                      enabled={visible && !session.transcriptOnly}
                       busy={!!session.busy}
                       undoLocked={
                         reviewUndoLocked ||

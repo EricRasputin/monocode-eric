@@ -1,3 +1,5 @@
+import { WorkspaceAccess } from "./WorkspaceAccess";
+import { rebasePath } from "../lib/paths";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { memo, useSyncExternalStore } from "react";
 import {
@@ -114,23 +116,37 @@ function FilePaneComponent({
       <div className="relative min-h-0 flex-1">
         {sessionReview ? (
           <div className="absolute inset-0 h-full">
-            <SessionChangesDiff
-              cwd={sessionReview.cwd}
-              sessionId={sessionReview.sessionChanges.sessionId}
-              focusPath={sessionReview.path}
-            />
+            <WorkspaceAccess cwd={sessionReview.cwd}>
+              {(cwd) => (
+                <SessionChangesDiff
+                  cwd={cwd}
+                  sessionId={sessionReview.sessionChanges.sessionId}
+                  focusPath={rebasePath(
+                    sessionReview.path,
+                    sessionReview.cwd,
+                    cwd,
+                  )}
+                />
+              )}
+            </WorkspaceAccess>
           </div>
         ) : commitReview && activeFile?.commit ? (
           <div className="absolute inset-0 h-full">
-            <CommitDiff cwd={activeFile.cwd} sha={activeFile.commit.sha} />
+            <WorkspaceAccess cwd={activeFile.cwd}>
+              {(cwd) => <CommitDiff cwd={cwd} sha={activeFile.commit!.sha} />}
+            </WorkspaceAccess>
           </div>
         ) : unifiedReview && activeFile ? (
           <div className="absolute inset-0 h-full">
-            <WorkingTreeDiff
-              cwd={activeFile.cwd}
-              focusPath={activeFile.path}
-              focusKind={activeFile.changeKind}
-            />
+            <WorkspaceAccess cwd={activeFile.cwd}>
+              {(cwd) => (
+                <WorkingTreeDiff
+                  cwd={cwd}
+                  focusPath={rebasePath(activeFile.path, activeFile.cwd, cwd)}
+                  focusKind={activeFile.changeKind}
+                />
+              )}
+            </WorkspaceAccess>
           </div>
         ) : null}
         {pane.files.map((file) => {
@@ -180,27 +196,38 @@ function FilePaneComponent({
                   }
                 />
               ) : isImagePath(file.path) ? (
-                <BinaryFileView path={file.path} cwd={file.cwd} />
+                <WorkspaceAccess cwd={file.cwd} path={file.path}>
+                  {(cwd) => (
+                    <BinaryFileView
+                      path={rebasePath(file.path, file.cwd, cwd)}
+                      cwd={cwd}
+                    />
+                  )}
+                </WorkspaceAccess>
               ) : (
-                <FileEditor
-                  path={file.path}
-                  cwd={file.cwd}
-                  showDiff={!!file.review}
-                  active={focused && file.id === pane.activeFileId}
-                  navigation={
-                    editorNavigation &&
-                    editorPathsEqual(file.path, editorNavigation.path)
-                      ? editorNavigation
-                      : null
-                  }
-                  onDirtyChange={(_path, dirty) =>
-                    onDirtyChange(file.id, dirty)
-                  }
-                  onErrorCountChange={(_path, count) =>
-                    onErrorCountChange(file.id, count)
-                  }
-                  onOpenFile={onOpenFile}
-                />
+                <WorkspaceAccess cwd={file.cwd} path={file.path}>
+                  {(cwd) => (
+                    <FileEditor
+                      path={rebasePath(file.path, file.cwd, cwd)}
+                      cwd={cwd}
+                      showDiff={!!file.review}
+                      active={focused && file.id === pane.activeFileId}
+                      navigation={
+                        editorNavigation &&
+                        editorPathsEqual(file.path, editorNavigation.path)
+                          ? editorNavigation
+                          : null
+                      }
+                      onDirtyChange={(_path, dirty) =>
+                        onDirtyChange(file.id, dirty)
+                      }
+                      onErrorCountChange={(_path, count) =>
+                        onErrorCountChange(file.id, count)
+                      }
+                      onOpenFile={onOpenFile}
+                    />
+                  )}
+                </WorkspaceAccess>
               )}
             </div>
           );

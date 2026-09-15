@@ -1,5 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { WorktreeRetirementDialog } from "../chrome/WorktreeRetirementDialog";
 import { WorktreeRecoveryStorage } from "../chrome/WorktreeRecoveryStorage";
@@ -11,10 +11,7 @@ import {
   setSessionArchived,
   upsertSession,
 } from "../lib/sessionStore";
-import {
-  archiveSessionsWithRetirement,
-  resumeArchivedWorktreeSession,
-} from "../lib/worktreeRetirement";
+import { archiveSessionsWithRetirement } from "../lib/worktreeRetirement";
 import {
   createWorktree,
   heartbeatWorktrees,
@@ -23,6 +20,7 @@ import {
   saveWorktreeSettings,
   type WorktreeRetirementPlan,
 } from "../lib/worktrees";
+import { createSessionWorkspacePreparation } from "../lib/sessionWorkspace";
 import "../index.css";
 
 if (!import.meta.env.DEV || !isTauri()) {
@@ -58,6 +56,29 @@ function NativeWorktreeVerification() {
   const [plan, setPlan] = useState<WorktreeRetirementPlan | null>(null);
   const [events, setEvents] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const prepareWorkspace = useMemo(
+    () =>
+      createSessionWorkspacePreparation({
+        current: (id) => sessionsRef.current.find((entry) => entry.id === id),
+        update: (session, patch) => {
+          const updated = {
+            ...(sessionsRef.current.find((entry) => entry.id === session.id) ??
+              session),
+            ...patch,
+          };
+          sessionsRef.current = sessionsRef.current.map((entry) =>
+            entry.id === session.id ? updated : entry,
+          );
+          setSessions(sessionsRef.current);
+          return updated;
+        },
+        activated: (session) =>
+          setArchived((ids) => ids.filter((id) => id !== session.id)),
+      }),
+    [],
+  );
   const log = (text: string) => setEvents((current) => [...current, text]);
   useEffect(() => {
     let active = true;
@@ -217,15 +238,35 @@ function NativeWorktreeVerification() {
           disabled={busy || !sessions[0]}
           onClick={() =>
             void run(async () => {
-              await resumeArchivedWorktreeSession(sessions[0]);
+              const prepared = await prepareWorkspace(sessions[0]);
               setArchived((current) =>
                 current.filter((id) => id !== sessions[0].id),
               );
-              log(`Restored ${sessions[0].worktreeCwd}`);
+              log(`Restored ${prepared.cwd}; branch will be read from Git`);
             })
           }
         >
           Restore conversation 1
+        </button>
+        <button
+          disabled={busy || !sessions[0]}
+          onClick={() =>
+            void run(async () => {
+              const saved = await getSession(sessions[0].id);
+              if (saved) {
+                setSessions((current) =>
+                  current.map((entry) =>
+                    entry.id === saved.id ? saved : entry,
+                  ),
+                );
+                log(
+                  `History only: ${JSON.stringify(saved.blocks)}; checkout ${saved.worktreeCwd} untouched`,
+                );
+              }
+            })
+          }
+        >
+          Read saved conversation 1
         </button>
       </div>
       {verifyStorage ? <WorktreeRecoveryStorage projectCwd={repo} /> : null}

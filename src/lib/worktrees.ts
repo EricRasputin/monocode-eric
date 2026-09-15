@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Session } from "./session";
-import type { WorkspaceTab } from "./layout";
+import { isPlanTab, isReleaseNotesTab, type WorkspaceTab } from "./layout";
 import type { ProjectTerminalDock } from "./projectTerminal";
 import { rebasePath } from "./paths";
 import { finishWorktreeNaming, type WorktreeNaming } from "./worktreeNaming";
@@ -133,14 +133,37 @@ export const createWorktree = async (
 };
 export const pinWorktree = (id: string, pinned: boolean) =>
   invoke<void>("worktree_pin", { id, pinned });
+// Preparation leases bridge native checkout creation, setup, and activation.
+// Heartbeats must include these even before React has committed a workspace surface.
+const preparationPaths = new Map<symbol, Set<string>>();
+export function leasePreparingWorkspace(path: string) {
+  const key = Symbol();
+  const paths = new Set([path]);
+  preparationPaths.set(key, paths);
+  return {
+    add: (preparedPath: string) => paths.add(preparedPath),
+    release: () => preparationPaths.delete(key),
+  };
+}
+
 // A delayed heartbeat must not reinstate paths released by a later archive.
-let heartbeatQueue: Promise<void> = Promise.resolve();
-export const heartbeatWorktrees = (paths: string[]): Promise<void> => {
-  const pending = heartbeatQueue.then(() =>
-    invoke<void>("worktree_heartbeat", { paths }),
-  );
+let heartbeatQueue: Promise<unknown> = Promise.resolve();
+function queueWorkspaceLease<T>(operation: () => Promise<T>): Promise<T> {
+  const pending = heartbeatQueue.then(operation);
   heartbeatQueue = pending.catch(() => undefined);
   return pending;
+}
+export const heartbeatWorktrees = (paths: string[]): Promise<void> => {
+  return queueWorkspaceLease(() =>
+    invoke<void>("worktree_heartbeat", {
+      paths: [
+        ...new Set([
+          ...paths,
+          ...[...preparationPaths.values()].flatMap((paths) => [...paths]),
+        ]),
+      ].filter((path) => path && path !== "~"),
+    }),
+  );
 };
 
 /** Existing conversations stay in their checkout. A failed first preparation
@@ -167,28 +190,36 @@ export async function prepareSessionWorktree(
   session: Session,
   name = session.title,
   naming?: WorktreeNaming,
+  onLocated?: (path: string) => void | Promise<void>,
 ): Promise<string | null> {
   if (session.inboxAsk || session.cwd === "~") return null;
-  const path = await invoke<string | null>("worktree_prepare", {
-    request: {
-      cwd: session.cwd,
-      sessionId: session.id,
-      path:
-        session.worktreeCwd ??
-        session.workspaceChoice?.path ??
-        (session.workspaceChoice?.mode === "local" ||
-        session.orchestrationLeadId
-          ? session.cwd
-          : null),
-      name,
-      createNew: shouldIsolateSession(session),
-      useWorktree: session.workspaceChoice
-        ? session.workspaceChoice.mode === "worktree"
-        : null,
-      baseRef: session.workspaceChoice?.baseRef ?? null,
-      ...(naming ? { autoNameToken: naming.token } : {}),
-    },
+  const path = await queueWorkspaceLease(async () => {
+    const located = await invoke<string | null>("worktree_prepare", {
+      request: {
+        cwd: session.cwd,
+        sessionId: session.id,
+        path:
+          session.worktreeCwd ??
+          session.workspaceChoice?.path ??
+          (session.workspaceChoice?.mode === "local" ||
+          session.orchestrationLeadId
+            ? session.cwd
+            : null),
+        name,
+        createNew: shouldIsolateSession(session),
+        useWorktree: session.workspaceChoice
+          ? session.workspaceChoice.mode === "worktree"
+          : null,
+        baseRef: session.workspaceChoice?.baseRef ?? null,
+        ...(naming ? { autoNameToken: naming.token } : {}),
+      },
+    });
+    if (located) await onLocated?.(located);
+    return located;
   });
+  if (!path && (session.worktreeCwd || session.workspaceChoice?.path)) {
+    throw new Error("Workspace preparation did not return the saved checkout");
+  }
   if (path) {
     const setup = setupWorktree(path);
     if (naming) {
@@ -208,13 +239,19 @@ export function protectedWorktreePaths(
   return [
     ...new Set(
       [
-        ...sessions.map(
-          (session) =>
-            session.worktreeCwd || session.workspaceChoice?.path || session.cwd,
-        ),
+        ...sessions
+          .filter((session) => !session.transcriptOnly)
+          .map(
+            (session) =>
+              session.worktreeCwd ||
+              session.workspaceChoice?.path ||
+              session.cwd,
+          ),
         ...tabs.flatMap((tab) =>
           [...tab.editorPanes, ...tab.terminalPanes].flatMap((pane) =>
-            pane.files.flatMap((file) => [file.cwd, file.path]),
+            pane.files
+              .filter((file) => !isPlanTab(file) && !isReleaseNotesTab(file))
+              .flatMap((file) => [file.cwd, file.path]),
           ),
         ),
         ...docks.flatMap((dock) =>

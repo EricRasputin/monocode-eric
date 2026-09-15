@@ -49,6 +49,9 @@ const retirementPlans = new Map<string, WorktreeRetirementPlan>();
 let archiveDemo: ArchiveDemo = "final";
 let partialAttempt = 0;
 let restorationComplete = false;
+let previewSetupFailure = false;
+let previewArchived = true;
+const workspaceCalls: string[] = [];
 let recoveryStorageVersion = 2;
 let recoveryStorageLimit = 64 * RECOVERY_STORAGE_MIB;
 let recoveryStorageUsed = 51.2 * RECOVERY_STORAGE_MIB;
@@ -282,6 +285,8 @@ mockIPC(
   async (command, args) => {
     const payload = args as {
       cwd?: string;
+      request?: { path?: string; cwd: string };
+      archived?: boolean;
       id?: string;
       ids?: string[];
       pinned?: boolean;
@@ -385,7 +390,24 @@ mockIPC(
       void emit("worktree-storage-changed");
       return recoveryStorage();
     }
-    if (command === "worktree_setup") return;
+    if (command === "worktree_prepare") {
+      workspaceCalls.push(command);
+      return payload.request?.path ?? payload.request?.cwd;
+    }
+    if (command === "worktree_setup") {
+      workspaceCalls.push(command);
+      if (previewSetupFailure)
+        throw new Error(
+          "Fixture setup failed; clear the failure toggle and retry",
+        );
+      restorationComplete = true;
+      return;
+    }
+    if (command === "session_set_archived") {
+      workspaceCalls.push(command);
+      previewArchived = !!payload.archived;
+      return;
+    }
     if (command === "worktree_name_status") return "waiting";
     if (command === "worktree_name") return "named";
     if (command === "worktree_heartbeat") return;
@@ -404,11 +426,13 @@ mockIPC(
 );
 
 const { createRoot } = await import("react-dom/client");
-const { useEffect, useState } = await import("react");
+const { useEffect, useMemo, useRef, useState } = await import("react");
 const { SettingsView } = await import("../surfaces/SettingsView");
 const { SettingsNav } = await import("../chrome/SettingsRail");
 const { WorkspacePicker } = await import("../chrome/WorkspacePicker");
 const { newSession } = await import("../lib/session");
+const { createSessionWorkspacePreparation } =
+  await import("../lib/sessionWorkspace");
 const { WorktreeRetirementDialog } =
   await import("../chrome/WorktreeRetirementDialog");
 const { AppToaster } = await import("../chrome/AppToaster");
@@ -433,8 +457,38 @@ function Preview() {
   const [section, setSection] =
     useState<import("../lib/settings").SettingsSectionId>("worktrees");
   const [light, setLight] = useState(isLightScheme);
-  const [composerSession, setComposerSession] = useState(() =>
-    newSession("claude", paths[0]),
+  const [composerSession, setComposerSession] = useState(() => ({
+    ...newSession("claude", paths[0]),
+    ...(previewParams.get("history") === "1"
+      ? {
+          transcriptOnly: true,
+          worktreeCwd: `${paths[0]}/.worktrees/restorable`,
+          branch: "monocode/restorable-work",
+          blocks: [
+            {
+              id: "saved-message",
+              role: "user" as const,
+              text: "Saved history remains readable while its worktree is retired.",
+            },
+          ],
+        }
+      : {}),
+  }));
+  const composerRef = useRef(composerSession);
+  composerRef.current = composerSession;
+  const prepareWorkspace = useMemo(
+    () =>
+      createSessionWorkspacePreparation({
+        current: (id) =>
+          composerRef.current.id === id ? composerRef.current : undefined,
+        update: (session, patch) => {
+          const prepared = { ...composerRef.current, ...session, ...patch };
+          composerRef.current = prepared;
+          setComposerSession(prepared);
+          return prepared;
+        },
+      }),
+    [],
   );
   const [notice, setNotice] = useState("");
   const [reviewPlan, setReviewPlan] = useState<WorktreeRetirementPlan | null>(
@@ -524,20 +578,14 @@ function Preview() {
           onArchiveSession={() => {}}
           onDeleteSession={() => {}}
           onOpenWhatsNew={() => {}}
-          onOpenWorktree={async (cwd, worktreeCwd) => {
-            const entry = currentEntries(cwd).find(
-              (candidate) => candidate.path === worktreeCwd,
+          onOpenWorktree={async (_cwd, worktreeCwd) => {
+            const session = { ...composerRef.current, worktreeCwd };
+            composerRef.current = session;
+            const prepared = await prepareWorkspace(session);
+            setNotice(
+              `Prepared ${prepared.cwd}; ${workspaceCalls.join(" → ")}`,
             );
-            if (!entry) return;
-            if (entry.missing) {
-              restorationComplete = true;
-              setNotice(
-                `Preview: restored ${entry.branch} from its saved branch.`,
-              );
-              await refreshWorktrees(cwd);
-            } else {
-              setNotice(`Preview: open ${entry.branch}`);
-            }
+            await refreshWorktrees(session.cwd);
           }}
         />
       </div>
@@ -553,6 +601,59 @@ function Preview() {
             }
           />
         </div>
+        {previewParams.get("history") === "1" ? (
+          <div className="space-y-2 border-b border-content/8 py-2">
+            <p>{composerSession.blocks[0]?.text}</p>
+            <p>
+              {previewArchived ? "Archived" : "Active"} ·{" "}
+              {composerSession.transcriptOnly
+                ? "Transcript only"
+                : "Workspace in use"}
+            </p>
+            <label>
+              <input
+                type="checkbox"
+                onChange={(event) => {
+                  previewSetupFailure = event.target.checked;
+                }}
+              />{" "}
+              Simulate setup failure
+            </label>
+            <button
+              className="mx-3 text-accent"
+              onClick={() => {
+                const before = workspaceCalls.length;
+                setComposerSession((session) => ({
+                  ...session,
+                  transcriptOnly: true,
+                }));
+                setNotice(
+                  `Read history: ${workspaceCalls.length - before} workspace calls; archive state unchanged`,
+                );
+              }}
+            >
+              Read history
+            </button>
+            <button
+              className="text-accent"
+              onClick={() => {
+                void prepareWorkspace(composerRef.current)
+                  .then((prepared) =>
+                    setNotice(
+                      `Prepared ${prepared.cwd}; ${workspaceCalls.join(" → ")}`,
+                    ),
+                  )
+                  .catch((error) =>
+                    setNotice(
+                      `${String(error)}; history remains readable and archived`,
+                    ),
+                  );
+              }}
+            >
+              Restore workspace
+            </button>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2 border-b border-content/8 pb-2">
           <span className="mr-1 font-medium text-content/65">Archive demo</span>
           {(

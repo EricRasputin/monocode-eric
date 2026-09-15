@@ -35,6 +35,8 @@ export type EditorNavigationTarget = EditorNavigation & {
 };
 
 export type FileOpenOptions = {
+  /** Conversation that owns a transcript file link, including unfocused panes. */
+  sessionId?: string;
   /** The caller obtained this concrete path from the filesystem or file index. */
   exact?: boolean;
 };

@@ -1,10 +1,10 @@
+import { WorkspacePreparation } from "./surfaces/WorkspaceAccess";
 import { refreshWorktrees } from "./hooks/useWorktrees";
 import { useArchiveRetirementReview } from "./hooks/useArchiveRetirementReview";
 import type { WorkspaceChoice } from "./lib/session";
 import {
   canChooseWorkspace,
   heartbeatWorktrees,
-  prepareSessionWorktree,
   protectedWorktreePaths,
   shouldIsolateSession,
 } from "./lib/worktrees";
@@ -13,11 +13,13 @@ import {
   initialSessionMetadata,
 } from "./lib/initialSessionMetadata";
 import { getHarness } from "./lib/harness/registry";
+import { archiveSessionsWithRetirement } from "./lib/worktreeRetirement";
 import {
-  archiveSessionsWithRetirement,
-  resumeArchivedWorktreeSession,
-  type SessionResumeResult,
-} from "./lib/worktreeRetirement";
+  createSessionWorkspacePreparation,
+  prepareWorkspacePath,
+  prepareStandaloneWorkspacePath,
+  prepareProviderWorkspace,
+} from "./lib/sessionWorkspace";
 import { WorktreeRetirementDialog } from "./chrome/WorktreeRetirementDialog";
 import { AppToaster } from "./chrome/AppToaster";
 import { toast } from "sonner";
@@ -181,7 +183,6 @@ import {
   applyHarnessEvent,
   appendUser,
   appendSteerUser,
-  bindHarnessSession,
   cancelHarnessTurn,
   canCompactHarnessContext,
   canSteerHarness,
@@ -813,6 +814,86 @@ export default function App({
     if (!notesEnabled) setNotesViewOpen(false);
   }, [notesEnabled]);
 
+  const prepareWorkspace = useMemo(
+    () =>
+      createSessionWorkspacePreparation({
+        current: (id) =>
+          sessionsRef.current.find((session) => session.id === id),
+        update: (input, patch) => {
+          if (removingSessionIds.current.has(input.id)) {
+            throw new Error("Conversation closed during workspace preparation");
+          }
+          const current =
+            sessionsRef.current.find((session) => session.id === input.id) ??
+            input;
+          const prepared = { ...current, ...patch };
+          const next = sessionsRef.current.map((session) =>
+            session.id === input.id ? prepared : session,
+          );
+          sessionsRef.current = next;
+          setSessions(next);
+          return prepared;
+        },
+        activated: (session) => {
+          toast.dismiss(`session-worktree:${session.id}`);
+          const activate = (entry: SessionSummary) =>
+            entry.id === session.id ? { ...entry, archived: false } : entry;
+          setHistory((entries) => entries.map(activate));
+          setStoredLinkedSessions((entries) => entries.map(activate));
+          notifyGitChanged();
+        },
+      }),
+    [],
+  );
+
+  const workspaceError = useCallback((error: unknown) => {
+    toast.error("Workspace unavailable", {
+      description: `${String(error)}. Saved history is still readable; retry the workspace action when ready.`,
+      duration: Infinity,
+      closeButton: true,
+    });
+  }, []);
+
+  // Resolve the owning conversation before using a file or terminal path. Never
+  // replace a saved worktree with the project's primary checkout on failure.
+  const preparePath = useCallback(
+    async (path: string, sessionId?: string, accessedPath = path) => {
+      const activeTab = tabsRef.current.find(
+        (tab) => tab.id === activeTabIdRef.current,
+      );
+      const candidates = sessionsRef.current;
+      const owner = sessionId
+        ? candidates.find((session) => session.id === sessionId)
+        : candidates
+            .filter((session) =>
+              isEqualOrInside(accessedPath, sessionWorkCwd(session)),
+            )
+            .sort(
+              (a, b) =>
+                sessionWorkCwd(b).length - sessionWorkCwd(a).length ||
+                Number(b.id === activeTab?.focusedId) -
+                  Number(a.id === activeTab?.focusedId),
+            )[0];
+      if (sessionId && !owner)
+        throw new Error("Conversation is no longer open");
+      if (owner)
+        return prepareWorkspacePath(
+          owner,
+          isEqualOrInside(path, sessionWorkCwd(owner))
+            ? path
+            : sessionWorkCwd(owner),
+          prepareWorkspace,
+        );
+      return prepareStandaloneWorkspacePath(path, path, prepareWorkspace);
+    },
+    [prepareWorkspace],
+  );
+
+  const prepareSurface = useCallback(
+    (cwd: string, path?: string) => preparePath(cwd, undefined, path),
+    [preparePath],
+  );
+
   const worktreePathsKey = JSON.stringify(
     protectedWorktreePaths(sessions, tabs, projectTerminals),
   );
@@ -913,6 +994,7 @@ export default function App({
   const stopSessionForRemoval = useCallback(
     async (sessionId: string): Promise<Session | undefined> => {
       await orchestrator.stopForSession(sessionId);
+      await prepareWorkspace.settled(sessionId);
       const open = sessionsRef.current.find(
         (session) => session.id === sessionId,
       );
@@ -929,7 +1011,7 @@ export default function App({
       flushHarnessEvents();
       return sessionsRef.current.find((session) => session.id === sessionId);
     },
-    [flushHarnessEvents],
+    [flushHarnessEvents, prepareWorkspace],
   );
 
   const applyApprovalEvent = useCallback(
@@ -1010,7 +1092,11 @@ export default function App({
     // Only the harnesses already in this window. Probing every installed CLI
     // at boot left unused agents (especially Pi) running in the background.
     const harnesses = [
-      ...new Set(sessionsRef.current.map((session) => session.harness)),
+      ...new Set(
+        sessionsRef.current
+          .filter((session) => !session.transcriptOnly)
+          .map((session) => session.harness),
+      ),
     ];
     void refreshHarnessCatalogs(harnesses).then(() => {
       setSessions((prev) =>
@@ -1040,9 +1126,8 @@ export default function App({
       (session) => activeTab && leafIds(activeTab.layout).includes(session.id),
     );
   const sessionDefaults = active ?? sessions[0];
-  const activeSkillContext = active
-    ? nativeSkillContextForSession(active)
-    : null;
+  const activeSkillContext =
+    active && !active.transcriptOnly ? nativeSkillContextForSession(active) : null;
   const activeSkillCwd = activeSkillContext?.cwd;
 
   useEffect(() => {
@@ -1650,21 +1735,7 @@ export default function App({
         );
       if (tab && existing) {
         // Restore even when a draft already points at this checkout.
-        const preparedPath = await prepareSessionWorktree({
-          ...existing,
-          worktreeCwd,
-        });
-        setSessions((previous) =>
-          previous.map((session) =>
-            session.id === existing.id
-              ? {
-                  ...session,
-                  worktreeCwd: preparedPath ?? worktreeCwd,
-                  workspaceChoice: undefined,
-                }
-              : session,
-          ),
-        );
+        await prepareWorkspace({ ...existing, worktreeCwd });
         setTabs((previous) =>
           previous.map((candidate) =>
             candidate.id === tab.id
@@ -1679,11 +1750,7 @@ export default function App({
       }
       const session = newDefaultSession(cwd);
       const prepared = { ...session, worktreeCwd };
-      const preparedCwd = await prepareSessionWorktree(prepared);
-      const next = {
-        ...prepared,
-        worktreeCwd: preparedCwd ?? prepared.worktreeCwd,
-      };
+      const { session: next } = await prepareWorkspace(prepared);
       const nextTab = newTab(next.id);
       setSessions((previous) => [...previous, next]);
       appendTab(nextTab, cwd);
@@ -1693,7 +1760,7 @@ export default function App({
       setComposerFocused(true);
       setSettingsOpen(false);
     },
-    [activateTab, appendTab],
+    [activateTab, appendTab, prepareWorkspace],
   );
 
   const onStartInboxItem = useCallback(
@@ -1908,45 +1975,58 @@ export default function App({
 
   const onOpenTerminal = useCallback(
     (cwd: string, asWorkspaceTab = false, occupySessionId?: string) => {
-      const workdir = cwd || (active ? sessionWorkCwd(active) : projectCwd);
-      if (openProjectTerminal(workdir)) return;
-
-      if (asWorkspaceTab || !activeTab) {
-        const file = newTerminalFile(workdir);
-        const tab = newTerminalWorkspaceTab(file);
-        appendTab(tab, workdir);
-        setActiveTabId(tab.id);
-        setComposerFocused(false);
-        return;
-      }
-
-      const occupying = sessionsRef.current.find(
-        (session) => session.id === (occupySessionId ?? activeTab.focusedId),
-      );
-      const occupyPaneId =
-        occupying && isBlankSession(occupying) ? occupying.id : undefined;
-      if (occupyPaneId && occupying) {
-        lastPersisted.current.delete(occupyPaneId);
-        void forgetHarnessSession(occupying.harness, occupyPaneId);
-        setSessions((prev) =>
-          prev.filter((session) => session.id !== occupyPaneId),
+      void (async () => {
+        const workdir = await preparePath(
+          cwd || (active ? sessionWorkCwd(active) : projectCwd),
+          occupySessionId,
         );
-      }
+        if (openProjectTerminal(workdir)) return;
 
-      const file = newTerminalFile(
-        workdir,
-        nextTerminalTitle(activeTab, workdir),
-      );
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === activeTab.id
-            ? openTerminalTab(tab, file, occupyPaneId)
-            : tab,
-        ),
-      );
-      setComposerFocused(false);
+        if (asWorkspaceTab || !activeTab) {
+          const file = newTerminalFile(workdir);
+          const tab = newTerminalWorkspaceTab(file);
+          appendTab(tab, workdir);
+          setActiveTabId(tab.id);
+          setComposerFocused(false);
+          return;
+        }
+
+        const occupying = sessionsRef.current.find(
+          (session) => session.id === (occupySessionId ?? activeTab.focusedId),
+        );
+        const occupyPaneId =
+          occupying && isBlankSession(occupying) ? occupying.id : undefined;
+        if (occupyPaneId && occupying) {
+          lastPersisted.current.delete(occupyPaneId);
+          void forgetHarnessSession(occupying.harness, occupyPaneId);
+          setSessions((prev) =>
+            prev.filter((session) => session.id !== occupyPaneId),
+          );
+        }
+
+        const file = newTerminalFile(
+          workdir,
+          nextTerminalTitle(activeTab, workdir),
+        );
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === activeTab.id
+              ? openTerminalTab(tab, file, occupyPaneId)
+              : tab,
+          ),
+        );
+        setComposerFocused(false);
+      })().catch(workspaceError);
     },
-    [active, activeTab, appendTab, openProjectTerminal, projectCwd],
+    [
+      active,
+      activeTab,
+      appendTab,
+      openProjectTerminal,
+      projectCwd,
+      preparePath,
+      workspaceError,
+    ],
   );
 
   const onNewTerminal = useCallback(() => {
@@ -1987,7 +2067,7 @@ export default function App({
     if (!looksLikeProject(gitCwd)) return;
     const dock = findProjectTerminal(projectTerminalsRef.current, gitCwd);
     if (!dock) {
-      openProjectTerminal(gitCwd);
+      onOpenTerminal(gitCwd);
       return;
     }
     const nextOpen = !dock.open;
@@ -1998,7 +2078,7 @@ export default function App({
     );
     if (nextOpen) focusProjectTerminal();
     else setProjectTerminalFocused(false);
-  }, [active?.cwd, focusProjectTerminal, openProjectTerminal, gitCwd]);
+  }, [active?.cwd, focusProjectTerminal, onOpenTerminal, gitCwd]);
 
   const onHideProjectTerminal = useCallback(() => {
     setProjectTerminals((prev) =>
@@ -2868,9 +2948,13 @@ export default function App({
       changeKind?: GitFileDiffKind,
     ) => {
       void (async () => {
-        const diffCwd = session?.cwd ?? gitCwdRef.current;
+        const previous = session?.cwd ?? gitCwdRef.current;
+        const diffCwd = await preparePath(previous, session?.sessionId);
         const resolved = path
-          ? ((await resolveOpenablePath(diffCwd, path)) ?? path)
+          ? ((await resolveOpenablePath(
+              diffCwd,
+              rebasePath(path, previous, diffCwd),
+            )) ?? path)
           : undefined;
         if (resolved) rememberOpenedFile(diffCwd, resolved);
         setTabs((prev) =>
@@ -2879,31 +2963,26 @@ export default function App({
             if (session) {
               return openSessionChangesTab(
                 tab,
-                session.cwd,
+                diffCwd,
                 session.sessionId,
                 resolved,
               );
             }
             if (loadDiffViewer() === "unified") {
-              return openChangesTab(
-                tab,
-                sidebarCwdRef.current,
-                resolved,
-                changeKind,
-              );
+              return openChangesTab(tab, diffCwd, resolved, changeKind);
             }
             if (!resolved) return tab;
             return openEditorTab(
               tab,
-              newFileTab(resolved, sidebarCwdRef.current, true, changeKind),
+              newFileTab(resolved, diffCwd, true, changeKind),
             );
           }),
         );
         setSidebarTab("changes");
         setComposerFocused(false);
-      })();
+      })().catch(workspaceError);
     },
-    [activeTabId],
+    [activeTabId, preparePath, workspaceError],
   );
 
   const onOpenWorkingTreeDiff = useCallback(
@@ -2913,37 +2992,56 @@ export default function App({
 
   /** Stack every working-tree change in one review, whatever the diff-view setting. */
   const onOpenAllChanges = useCallback(() => {
-    setTabs((prev) =>
-      prev.map((tab) =>
-        tab.id === activeTabId
-          ? openChangesTab(tab, sidebarCwdRef.current)
-          : tab,
-      ),
-    );
-    setComposerFocused(false);
-  }, [activeTabId]);
+    void preparePath(gitCwdRef.current)
+      .then((cwd) => {
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === activeTabId ? openChangesTab(tab, cwd) : tab,
+          ),
+        );
+        setComposerFocused(false);
+      })
+      .catch(workspaceError);
+  }, [activeTabId, preparePath, workspaceError]);
 
   const onOpenCommit = useCallback(
     (commit: GitHistoryCommit) => {
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === activeTabId
-            ? openCommitTab(tab, sidebarCwdRef.current, {
-                sha: commit.sha,
-                shortSha: commit.shortSha,
-                subject: commit.subject,
-              })
-            : tab,
-        ),
-      );
-      setComposerFocused(false);
+      void preparePath(gitCwdRef.current)
+        .then((cwd) => {
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.id === activeTabId
+                ? openCommitTab(tab, cwd, {
+                    sha: commit.sha,
+                    shortSha: commit.shortSha,
+                    subject: commit.subject,
+                  })
+                : tab,
+            ),
+          );
+          setComposerFocused(false);
+        })
+        .catch(workspaceError);
     },
-    [activeTabId],
+    [activeTabId, preparePath, workspaceError],
+  );
+
+  const onWorkspaceSidebarTab = useCallback(
+    (tab: SidebarTabId) => {
+      if (tab === "sessions") {
+        setSidebarTab(tab);
+        return;
+      }
+      void preparePath(gitCwdRef.current)
+        .then(() => setSidebarTab(tab))
+        .catch(workspaceError);
+    },
+    [preparePath, workspaceError],
   );
 
   const onShowSourceControl = useCallback(() => {
-    setSidebarTab("changes");
-  }, []);
+    onWorkspaceSidebarTab("changes");
+  }, [onWorkspaceSidebarTab]);
 
   const onToggleChanges = useCallback(() => {
     onShowSourceControl();
@@ -3125,76 +3223,17 @@ export default function App({
         void refreshHistory(sidebarCwd);
         return null;
       }
-      let resumeResult: SessionResumeResult;
-      try {
-        resumeResult = await resumeArchivedWorktreeSession(loaded);
-        loaded = resumeResult.session;
-      } catch (error) {
-        openingSessionIds.current.delete(sessionId);
-        void message(
-          `Could not reopen this conversation.\n\n${String(error)}`,
-          {
-            title: "MonoCode",
-            kind: "error",
-          },
-        );
-        return null;
-      }
-      if (removingSessionIds.current.has(sessionId)) {
-        openingSessionIds.current.delete(sessionId);
-        return null;
-      }
       loadedSessionCache.current.delete(sessionId);
-      const noticeId = `session-worktree:${sessionId}`;
-      if (resumeResult.resumed) {
-        toast.dismiss(noticeId);
-        setHistory((current) =>
-          current.map((entry) =>
-            entry.id === sessionId ? { ...entry, archived: false } : entry,
-          ),
-        );
-      } else {
-        const error = resumeResult.worktreeError;
-        toast.warning("Conversation opened; workspace unavailable", {
-          id: noticeId,
-          description:
-            "You can read the saved conversation. Sending a message will retry workspace preparation.",
-          duration: Infinity,
-          closeButton: true,
-          action: {
-            label: "Details",
-            onClick: () => {
-              void message(error, {
-                title: "Workspace unavailable",
-                kind: "error",
-              });
-            },
-          },
-        });
-      }
-      if (open) {
-        const next = sessionsRef.current.map((entry) =>
-          entry.id === sessionId && entry.worktreeCwd && resumeResult.resumed
-            ? { ...entry, branch: undefined }
-            : entry,
-        );
-        sessionsRef.current = next;
-        setSessions(next);
-        return next.find((entry) => entry.id === sessionId) ?? loaded;
-      }
-      const restored = restoreSessionCheckout(loaded);
+      if (open) return open;
+      // Reading saved messages never touches the checkout or provider runtime.
+      const restored = {
+        ...restoreSessionCheckout(loaded),
+        transcriptOnly: true,
+      };
       const appeared = sessionsRef.current.find(
         (session) => session.id === sessionId,
       );
       if (appeared) return appeared;
-      if (restored.providerSessionId && isLiveHarness(restored.harness)) {
-        bindHarnessSession(
-          restored.harness,
-          restored.id,
-          restored.providerSessionId,
-          sessionWorkCwd(restored),
-        );
-      }
       lastPersisted.current.set(restored.id, persistFingerprint(restored));
       if (!sessionsRef.current.some((session) => session.id === restored.id)) {
         const next = [...sessionsRef.current, restored];
@@ -4346,15 +4385,20 @@ export default function App({
   const onOpenFile = useCallback<OpenFileFn>(
     (path, navigation, options) => {
       void (async () => {
+        const owner = sessionsRef.current.find(
+          (session) => session.id === options?.sessionId,
+        );
+        const previous = owner ? sessionWorkCwd(owner) : gitCwdRef.current;
+        const cwd = await preparePath(previous, options?.sessionId);
         const resolved = await resolveFileOpenRequest(
-          gitCwdRef.current,
-          path,
+          cwd,
+          rebasePath(path, previous, cwd),
           options,
         );
         rememberOpenedFile(sidebarCwdRef.current, resolved);
         const tab = tabsRef.current.find((entry) => entry.id === activeTabId);
         if (!tab) return;
-        const file = newFileTab(resolved, sidebarCwdRef.current);
+        const file = newFileTab(resolved, cwd);
         setTabs((prev) =>
           prev.map((entry) =>
             entry.id === tab.id ? openEditorTab(entry, file) : entry,
@@ -4369,9 +4413,9 @@ export default function App({
           });
         }
         setComposerFocused(false);
-      })();
+      })().catch(workspaceError);
     },
-    [activeTabId],
+    [activeTabId, preparePath, workspaceError],
   );
 
   const onOpenPlan = useCallback(
@@ -4957,6 +5001,71 @@ export default function App({
       let proposalText = "";
       let nativeProposalText = "";
       void (async () => {
+        const worktreeStatusId =
+          canChooseWorkspace(current) &&
+          current.workspaceChoice?.mode !== "local"
+            ? crypto.randomUUID()
+            : null;
+        const showWorktreePreparation = (show: boolean) => {
+          if (!worktreeStatusId) return;
+          const withoutStatus = (session: Session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  blocks: session.blocks.filter(
+                    (block) => block.id !== worktreeStatusId,
+                  ),
+                }
+              : session;
+          if (!show) {
+            sessionsRef.current = sessionsRef.current.map(withoutStatus);
+            setSessions((previous) => previous.map(withoutStatus));
+            return;
+          }
+          setSessions((previous) =>
+            previous.map((session) => {
+              if (session.id !== sessionId) return session;
+              return {
+                ...session,
+                blocks: [
+                  ...session.blocks,
+                  {
+                    id: worktreeStatusId,
+                    role: "system",
+                    text: "Preparing worktree…",
+                  },
+                ],
+              };
+            }),
+          );
+        };
+        if (!current.inboxAsk) {
+          showWorktreePreparation(true);
+          try {
+            const prepared = await prepareProviderWorkspace(
+              current,
+              prepareWorkspace,
+              () => turnGen.current.get(sessionId) === gen,
+              submittedText,
+              naming,
+            );
+            workCwd = prepared.cwd;
+            if (turnGen.current.get(sessionId) !== gen) return;
+          } finally {
+            showWorktreePreparation(false);
+          }
+          if (turnGen.current.get(sessionId) !== gen) return;
+          if (!orchestrator.forSession(sessionId)) {
+            await beginSessionTurn(sessionId, workCwd);
+          }
+          setHistory((entries) =>
+            entries.map((entry) =>
+              entry.id === sessionId && entry.archived
+                ? { ...entry, archived: false }
+                : entry,
+            ),
+          );
+        }
         if (proposalDraft && proposalId) {
           const settings = await discoverOrchestrationSettings();
           if (turnGen.current.get(sessionId) !== gen) return;
@@ -5049,97 +5158,7 @@ export default function App({
         };
 
         let buildSucceeded = false;
-        const worktreeStatusId =
-          canChooseWorkspace(current) &&
-          current.workspaceChoice?.mode !== "local"
-            ? crypto.randomUUID()
-            : null;
-        const showWorktreePreparation = (show: boolean) => {
-          if (!worktreeStatusId) return;
-          const withoutStatus = (session: Session) =>
-            session.id === sessionId
-              ? {
-                  ...session,
-                  blocks: session.blocks.filter(
-                    (block) => block.id !== worktreeStatusId,
-                  ),
-                }
-              : session;
-          if (!show) {
-            sessionsRef.current = sessionsRef.current.map(withoutStatus);
-            setSessions((previous) => previous.map(withoutStatus));
-            return;
-          }
-          setSessions((previous) =>
-            previous.map((session) => {
-              if (session.id !== sessionId) return session;
-              return {
-                ...session,
-                blocks: [
-                  ...session.blocks,
-                  {
-                    id: worktreeStatusId,
-                    role: "system",
-                    text: "Preparing worktree…",
-                  },
-                ],
-              };
-            }),
-          );
-        };
         try {
-          if (!current.inboxAsk) {
-            showWorktreePreparation(true);
-            let worktreeCwd: string | null;
-            try {
-              worktreeCwd = await prepareSessionWorktree(
-                current,
-                submittedText,
-                naming,
-              );
-            } finally {
-              showWorktreePreparation(false);
-            }
-            if (turnGen.current.get(sessionId) !== gen) return;
-            if (worktreeCwd) {
-              workCwd = worktreeCwd;
-              const next = sessionsRef.current.map((session) =>
-                session.id === sessionId
-                  ? {
-                      ...session,
-                      worktreeCwd,
-                      workspaceChoice: undefined,
-                      branch: undefined,
-                    }
-                  : session,
-              );
-              sessionsRef.current = next;
-              setSessions(next);
-              // Persist checkout identity before the agent can change any files.
-              const preparedSession = next.find(
-                (session) => session.id === sessionId,
-              );
-              if (preparedSession) await upsertSession(preparedSession);
-              notifyGitChanged();
-            }
-            // A restored workspace may still contain an archived conversation.
-            // Resuming work must protect it after this window's lease ends.
-            if (shouldPersistSession(current)) {
-              await setSessionArchived(sessionId, false);
-            }
-            toast.dismiss(`session-worktree:${sessionId}`);
-            if (turnGen.current.get(sessionId) !== gen) return;
-            if (!orchestrator.forSession(sessionId)) {
-              await beginSessionTurn(sessionId, workCwd);
-            }
-            setHistory((entries) =>
-              entries.map((entry) =>
-                entry.id === sessionId && entry.archived
-                  ? { ...entry, archived: false }
-                  : entry,
-              ),
-            );
-          }
           if (turnGen.current.get(sessionId) !== gen) return;
           if (proposalDraft) proposalDraft = { ...proposalDraft, cwd: workCwd };
           const prepared = await prepareAttachments(attachments);
@@ -5354,6 +5373,7 @@ export default function App({
       dismissNoticesForContinuedSession,
       enqueueHarnessEvent,
       flushHarnessEvents,
+      prepareWorkspace,
     ],
   );
 
@@ -5627,31 +5647,34 @@ export default function App({
         (session) => session.id === sourceId,
       );
       if (!source) return;
-      const cwd = sessionWorkCwd(source);
-      const from = harnessForTurn(source.blocks, turn, source.harness);
-      const userRequest = turnUserRequest(turn);
-      const files = turnEditedFiles(turn, cwd);
-      const prompt = buildSecondOpinionPrompt({
-        from,
-        userRequest,
-        report: turnReport(turn),
-        files,
-      });
-      const session = {
-        ...newSession(harness, cwd, model, source.runtimeMode),
-        title: formatSessionTitle(harness, SECOND_OPINION_TITLE),
-      };
-      openSessionBeside(sourceId, session, cwd);
-      onSubmit(session.id, prompt, [], {
-        secondOpinion: buildSecondOpinionCard({
+      void (async () => {
+        const cwd = (await prepareWorkspace(source)).cwd;
+        const from = harnessForTurn(source.blocks, turn, source.harness);
+        const userRequest = turnUserRequest(turn);
+        const files = turnEditedFiles(turn, cwd);
+        const prompt = buildSecondOpinionPrompt({
           from,
-          to: harness,
           userRequest,
+          report: turnReport(turn),
           files,
-        }),
-      });
+        });
+        const session = {
+          ...newSession(harness, source.cwd, model, source.runtimeMode),
+          worktreeCwd: cwd,
+          title: formatSessionTitle(harness, SECOND_OPINION_TITLE),
+        };
+        openSessionBeside(sourceId, session, cwd);
+        onSubmit(session.id, prompt, [], {
+          secondOpinion: buildSecondOpinionCard({
+            from,
+            to: harness,
+            userRequest,
+            files,
+          }),
+        });
+      })().catch(workspaceError);
     },
-    [onSubmit, openSessionBeside],
+    [onSubmit, openSessionBeside, prepareWorkspace, workspaceError],
   );
 
   const onHandoff = useCallback(
@@ -5667,7 +5690,9 @@ export default function App({
       const files = turnEditedFiles(sliced.blocks, cwd);
       const display = sessionDisplayTitle(source.title, source.harness);
       const session = {
-        ...newSession(harness, cwd, model, source.runtimeMode),
+        ...newSession(harness, source.cwd, model, source.runtimeMode),
+        worktreeCwd: cwd,
+        transcriptOnly: source.transcriptOnly,
         title: formatSessionTitle(
           harness,
           display === "New session" ? HANDOFF_TITLE : display,
@@ -5687,7 +5712,7 @@ export default function App({
 
   const autoContinueKey = sessions
     .filter(
-      (session) => canAutoContinue(session) && isLiveHarness(session.harness),
+      (session) => !session.transcriptOnly && canAutoContinue(session) && isLiveHarness(session.harness),
     )
     .map((session) => session.id)
     .join("\n");
@@ -5713,6 +5738,22 @@ export default function App({
     return () => window.clearTimeout(timer);
   }, [autoContinueKey, onSubmit]);
 
+  const onPrepareWorkspace = useCallback(
+    async (sessionId: string) => {
+      const session = sessionsRef.current.find(
+        (entry) => entry.id === sessionId,
+      );
+      if (!session) throw new Error("Conversation is no longer open");
+      try {
+        return (await prepareWorkspace(session)).cwd;
+      } catch (error) {
+        workspaceError(error);
+        throw error;
+      }
+    },
+    [prepareWorkspace, workspaceError],
+  );
+
   const onCompactContext = useCallback(
     (sessionId: string) => {
       const current = sessionsRef.current.find(
@@ -5736,7 +5777,6 @@ export default function App({
 
       const gen = (turnGen.current.get(sessionId) ?? 0) + 1;
       turnGen.current.set(sessionId, gen);
-      const workCwd = sessionWorkCwd(current);
       const started = sessionsRef.current.map((session) =>
         session.id === sessionId
           ? applyHarnessEvent(
@@ -5751,10 +5791,16 @@ export default function App({
 
       void (async () => {
         try {
+          const prepared = await prepareProviderWorkspace(
+            current,
+            prepareWorkspace,
+            () => turnGen.current.get(sessionId) === gen,
+          );
+          if (turnGen.current.get(sessionId) !== gen) return;
           await compactHarnessContext({
             harness: current.harness,
             sessionId,
-            cwd: workCwd,
+            cwd: prepared.cwd,
             model: current.model,
             modelSettings: current.modelSettings,
             runtimeMode: current.runtimeMode,
@@ -6011,13 +6057,6 @@ export default function App({
           workspaceChoice: { mode: "local" },
           orchestrationLeadId: run.leadId,
         };
-        if (worker.providerSessionId)
-          bindHarnessSession(
-            worker.harness,
-            worker.id,
-            worker.providerSessionId,
-            sessionWorkCwd(worker),
-          );
         await upsertSession(worker);
         const next = [...sessionsRef.current, worker];
         sessionsRef.current = next;
@@ -6278,6 +6317,8 @@ export default function App({
             throw new Error(
               "The lead model has changed. Switch back to the model shown on this card, or generate a new proposal.",
             );
+          const prepared = await prepareWorkspace(session);
+          proposal = { ...proposal, cwd: prepared.cwd };
           const starting = updateOrchestrationCard(leadId, blockId, {
             ...proposal,
             status: "starting",
@@ -6316,6 +6357,7 @@ export default function App({
       queueWorkerPanes,
       onSubmit,
       updateOrchestrationCard,
+      prepareWorkspace,
     ],
   );
 
@@ -6440,20 +6482,28 @@ export default function App({
   }, []);
 
   const onGoToFile = useCallback(() => {
-    setSearchViewOpen(false);
-    setInboxViewOpen(false);
-    setNotesViewOpen(false);
-    setFilePickerOpen(true);
-  }, []);
+    void preparePath(gitCwdRef.current)
+      .then(() => {
+        setSearchViewOpen(false);
+        setInboxViewOpen(false);
+        setNotesViewOpen(false);
+        setFilePickerOpen(true);
+      })
+      .catch(workspaceError);
+  }, [preparePath, workspaceError]);
 
   const onFindInProject = useCallback(() => {
-    setSearchViewOpen(false);
-    setInboxViewOpen(false);
-    setNotesViewOpen(false);
-    setSidebarTab("files");
-    setFilesSearchOpen(true);
-    setSearchFocusToken((token) => token + 1);
-  }, []);
+    void preparePath(gitCwdRef.current)
+      .then(() => {
+        setSearchViewOpen(false);
+        setInboxViewOpen(false);
+        setNotesViewOpen(false);
+        setSidebarTab("files");
+        setFilesSearchOpen(true);
+        setSearchFocusToken((token) => token + 1);
+      })
+      .catch(workspaceError);
+  }, [preparePath, workspaceError]);
 
   const onOpenSearch = useCallback(() => {
     setFilePickerOpen(false);
@@ -7065,9 +7115,11 @@ export default function App({
     onSecondOpinion,
     onHandoff,
     onNewTerminal: onNewTerminalInSession,
+    onPrepareWorkspace,
   };
 
   return (
+    <WorkspacePreparation.Provider value={prepareSurface}>
     <OrchestrationActions.Provider value={orchestrationActions}>
       <OrchestrationWorkers.Provider value={orchestrationWorkers}>
         <div
@@ -7080,7 +7132,11 @@ export default function App({
             gitCwd={gitCwd}
             open
             tab={sidebarTab}
-            onTabChange={setSidebarTab}
+            onTabChange={onWorkspaceSidebarTab}
+            transcriptOnly={!!active?.transcriptOnly}
+            onPrepareWorkspace={() => {
+              void preparePath(gitCwd).catch(workspaceError);
+            }}
             filesSearchOpen={filesSearchOpen}
             onFilesSearchOpenChange={setFilesSearchOpen}
             onOpenFilesSearch={onFindInProject}
@@ -7501,6 +7557,7 @@ export default function App({
         </div>
       </OrchestrationWorkers.Provider>
     </OrchestrationActions.Provider>
+    </WorkspacePreparation.Provider>
   );
 }
 function conversationTitle(session: Session): string {
