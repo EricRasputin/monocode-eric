@@ -84,7 +84,9 @@ fn validate_entry(
 ) -> Result<(), String> {
     setup::validate_checkout(entry, &entry.path)?;
     let managed_root = std::fs::canonicalize(&host.root).map_err(|e| e.to_string())?;
-    let root = Path::new(&entry.path);
+    // Stored paths use the JS form (D:/...), whereas canonicalize returns the
+    // extended Windows prefix (\\?\D:\...). Compare canonical paths on both sides.
+    let root = std::fs::canonicalize(&entry.path).map_err(|e| e.to_string())?;
     if !root.starts_with(&managed_root) || root == managed_root {
         return Err("Checkout is outside the managed worktree root".into());
     }

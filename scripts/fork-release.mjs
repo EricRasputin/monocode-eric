@@ -160,17 +160,33 @@ function gitSha() {
   }).trim();
 }
 
-export function forkChangelogSection(version, messages, upstreamVersion, date) {
-  releaseTag(version);
-  const entries = messages.map((message) => {
+function forkChangeList(messages) {
+  return messages.map((message) => {
     const paragraphs = message.trim().split(/\n\s*\n/);
     const title =
       /^Merge /.test(paragraphs[0]) && paragraphs[1]
         ? paragraphs[1].split("\n")[0]
         : paragraphs[0].split("\n")[0];
     return `- ${title}`;
-  });
-  return `## [${version}] - ${date}\n\nBased on upstream MonoCode ${upstreamVersion}.\n\n${entries.join("\n")}\n\n[Full release notes](https://github.com/${repository}/releases/tag/${releaseTag(version)})\n`;
+  }).join("\n");
+}
+
+export function forkChangelogSection(version, messages, upstreamVersion, date) {
+  releaseTag(version);
+  return `## [${version}] - ${date}\n\nBased on upstream MonoCode ${upstreamVersion}.\n\n${forkChangeList(messages)}\n\n[Full release notes](https://github.com/${repository}/releases/tag/${releaseTag(version)})\n`;
+}
+
+export function forkCommitMessages(previous, upstreamCommit, root = process.cwd()) {
+  // Traverse merged branches too: local commits can arrive through an upstream
+  // integration PR. Upstream's own changes remain in its bundled changelog.
+  const args = ["log", "--no-merges", "--format=%B%x00"];
+  if (previous) args.push(`${previous}..HEAD`);
+  else args.push("HEAD");
+  args.push("--not", upstreamCommit);
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .map((message) => message.trim())
+    .filter(Boolean);
 }
 
 function prepare(version) {
@@ -192,15 +208,9 @@ function prepare(version) {
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     ).trim();
   } catch {
-    // The first release has no preceding fork tag; show recent main changes.
+    // The first release has no preceding fork tag; show all fork changes.
   }
-  const args = ["log", "--first-parent", "--format=%B%x00"];
-  if (previous) args.push(`${previous}..HEAD`);
-  else args.push("-10");
-  const messages = execFileSync("git", args, { encoding: "utf8" })
-    .split("\0")
-    .map((message) => message.trim())
-    .filter(Boolean);
+  const messages = forkCommitMessages(previous, upstream.commit);
   const section = forkChangelogSection(
     version,
     messages,
@@ -427,7 +437,8 @@ function publish(version) {
   const generated = JSON.parse(gh(...notesArgs)).body;
   const upstream = readUpstreamRelease();
   const title = `MonoCode Fork ${version} (${upstream.version})`;
-  const notes = `${title}.\n\nBased on [upstream MonoCode ${upstream.version}](https://github.com/${upstream.repository}/releases/tag/${upstream.tag}), commit \`${upstream.commit}\`.\n\n${generated}`;
+  const changes = forkChangeList(forkCommitMessages(previous?.tag_name, upstream.commit));
+  const notes = `${title}.\n\nBased on [upstream MonoCode ${upstream.version}](https://github.com/${upstream.repository}/releases/tag/${upstream.tag}), commit \`${upstream.commit}\`.\n\n## Fork changes\n\n${changes}\n\n${generated}`;
   const assets = manifest(version, sha, notes);
   const notesFile = "release-artifacts/release-notes.md";
   writeFileSync(notesFile, `${notes}\n`);
