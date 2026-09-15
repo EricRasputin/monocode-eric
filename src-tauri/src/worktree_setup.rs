@@ -253,6 +253,7 @@ pub fn worktree_setup(
         progress(if result.is_ok() { "ready" } else { "failed" });
         result
     });
+    super::automatic::schedule(&app);
     disk::refresh(&app);
     result?;
     let _repository = host.repository_guard(&common)?;

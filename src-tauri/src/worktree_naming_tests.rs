@@ -165,6 +165,7 @@ fn setup_ready(f: &Fixture, entry: &Owned) {
         environment::finish_setup(&f.conn, &operation, &result).unwrap();
         result.unwrap();
     }
+    crate::worktrees::disk::release_handoff(&f.host.disk, &f.conn, &entry.path).unwrap();
 }
 
 fn current(f: &Fixture, id: &str) -> Owned {

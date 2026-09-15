@@ -130,6 +130,7 @@ impl RetirementFixture {
             }
             environment::BeginSetup::Skip => {}
         }
+        disk::release_handoff(&self.host.disk, &self.conn, &entry.path).unwrap();
         entry
     }
 

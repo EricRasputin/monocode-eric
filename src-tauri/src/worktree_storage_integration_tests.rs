@@ -135,6 +135,7 @@ impl StorageFixture {
                 result.unwrap();
             }
         }
+        disk::release_handoff(&self.host.disk, self.conn(), &entry.path).unwrap();
     }
 
     fn restore(&self, id: &str) -> Owned {

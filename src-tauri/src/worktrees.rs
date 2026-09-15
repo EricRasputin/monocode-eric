@@ -38,6 +38,9 @@ mod storage_integration_tests;
 #[path = "worktree_storage_maintenance.rs"]
 mod storage_maintenance;
 
+#[path = "worktree_automatic_retirement.rs"]
+pub(crate) mod automatic;
+
 #[path = "worktree_merge.rs"]
 mod worktree_merge;
 
@@ -205,6 +208,8 @@ pub struct WorktreeOverview {
     pub project_cwd: String,
     pub settings: WorktreeSettings,
     pub entries: Vec<WorktreeEntry>,
+    pub retirement_policy: automatic::Policy,
+    pub automatic_retirement: Vec<automatic::Pending>,
 }
 
 #[cfg(test)]
@@ -480,6 +485,7 @@ pub(crate) fn schema(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     naming::schema(conn)?;
     disk::schema(conn)?;
+    automatic::schema(conn)?;
     Ok(())
 }
 
@@ -519,8 +525,7 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
     environment::reset_interrupted(&app.state::<SessionStore>().open_auxiliary_conn()?)?;
     naming::recover(app, &app.state::<SessionStore>().open_auxiliary_conn()?)?;
     disk::start_monitor(app);
-    storage_maintenance::schedule(app);
-    // Cleanup is only invoked with the IDs the user reviewed and confirmed.
+    // Maintenance starts after all native lifecycle services are registered.
     Ok(())
 }
 
@@ -835,6 +840,29 @@ fn active_use_reason(
     windows: &HashMap<String, Vec<PathBuf>>,
     entry: &Owned,
 ) -> Result<Option<String>, String> {
+    if windows.contains_key("$unregistered-windows") {
+        return Ok(Some(
+            "Waiting for open windows to register their workspace activity".into(),
+        ));
+    }
+    let reserved: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM worktree_disk_reservations WHERE path = ?1)",
+            [&entry.path],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if reserved {
+        return Ok(Some(
+            "Workspace preparation or setup has reserved this checkout".into(),
+        ));
+    }
+    if setup::active_paths()
+        .iter()
+        .any(|path| path_inside(path, Path::new(&entry.path)))
+    {
+        return Ok(Some("Worktree setup is active".into()));
+    }
     if entry.pinned {
         return Ok(Some("Pinned".into()));
     }
@@ -1301,9 +1329,20 @@ fn review_retirement(
     entry: &Owned,
     plan_id: &str,
 ) -> Result<RetirementSnapshot, String> {
+    review_retirement_inner(conn, windows, entry, plan_id, true)
+}
+
+fn review_retirement_inner(
+    conn: &Connection,
+    windows: &HashMap<String, Vec<PathBuf>>,
+    entry: &Owned,
+    plan_id: &str,
+    review_branches: bool,
+) -> Result<RetirementSnapshot, String> {
     if let Some(reason) = active_use_reason(conn, windows, entry)? {
         return Err(reason);
     }
+    check_git_locks(entry)?;
     if !is_owned_branch(entry) || protected_branch_name(&entry.branch) {
         return Err("Branch is not an app-owned retirement branch".into());
     }
@@ -1368,8 +1407,11 @@ fn review_retirement(
         }
     };
     environment::record_review(conn, entry, plan_id)?;
-    let merge_evidence =
-        worktree_merge::review(Path::new(&entry.repo), &entry.base_ref, &commit_oid);
+    let merge_evidence = if review_branches {
+        worktree_merge::review(Path::new(&entry.repo), &entry.base_ref, &commit_oid)
+    } else {
+        Err("Branch deletion was not requested".into())
+    };
     let (base_oid, integrated, integration_reason) = match merge_evidence {
         Ok(evidence) => (
             evidence.target_oid,
@@ -1402,12 +1444,16 @@ fn review_retirement(
         ),
         None => (false, Some("Local branch is already absent".into())),
     };
-    let remote = tracking_remote(
-        Path::new(&entry.repo),
-        &entry.branch,
-        (!base_oid.is_empty()).then_some(base_oid.as_str()),
-        integration_reason.as_deref(),
-    );
+    let remote = review_branches
+        .then(|| {
+            tracking_remote(
+                Path::new(&entry.repo),
+                &entry.branch,
+                (!base_oid.is_empty()).then_some(base_oid.as_str()),
+                integration_reason.as_deref(),
+            )
+        })
+        .flatten();
     let (
         remote_name,
         remote_branch,
@@ -2048,6 +2094,9 @@ fn build_retirement_plan_inner(
             // routine. Leave the checkout alone and do not surface cleanup.
             continue;
         }
+        if !session_ids.is_empty() && automatic::enabled(conn, &entry)? {
+            continue;
+        }
         match review_retirement(conn, windows, &entry, &plan_id) {
             Ok(snapshot) => {
                 let no_checkout = !snapshot.checkout_present;
@@ -2207,6 +2256,8 @@ fn recheck_stable_safety(
     snapshot: &RetirementSnapshot,
 ) -> Result<Owned, String> {
     let entry = current_owned_for_snapshot(conn, snapshot)?;
+    automatic::recheck_policy(conn, &entry, snapshot)?;
+    check_git_locks(&entry)?;
     if let Some(reason) = active_use_reason(conn, windows, &entry)? {
         return Err(reason);
     }
@@ -2218,6 +2269,34 @@ fn recheck_stable_safety(
         return Err("Repository identity changed after review".into());
     }
     Ok(entry)
+}
+
+fn check_git_locks(entry: &Owned) -> Result<(), String> {
+    let mut directories = vec![PathBuf::from(&entry.common)];
+    if Path::new(&entry.path).exists() {
+        directories.push(PathBuf::from(git(
+            Path::new(&entry.path),
+            &["rev-parse", "--path-format=absolute", "--git-dir"],
+        )?));
+    }
+    for directory in directories {
+        for name in [
+            "index.lock",
+            "HEAD.lock",
+            "packed-refs.lock",
+            "config.lock",
+            "shallow.lock",
+        ] {
+            if directory.join(name).symlink_metadata().is_ok() {
+                return Err(format!("Git lock is present: {name}"));
+            }
+        }
+        let branch_lock = directory.join(format!("refs/heads/{}.lock", entry.branch));
+        if branch_lock.symlink_metadata().is_ok() {
+            return Err("Git branch lock is present".into());
+        }
+    }
+    Ok(())
 }
 
 fn recheck_branch_integration(
@@ -2334,15 +2413,16 @@ fn retirement_failure(
         ),
         Ok(None)
     );
-    let remote_absent = matches!(
-        (
-            remote_was_requested,
-            snapshot.remote_branch.as_deref(),
-            recheck_remote_configuration(snapshot)
-        ),
-        (true, Some(branch), Ok(target))
-            if matches!(remote_oid(Path::new(&snapshot.repo), &target, branch), Ok(None))
-    );
+    let remote_absent = remote_was_requested
+        && matches!(
+            (
+                remote_was_requested,
+                snapshot.remote_branch.as_deref(),
+                recheck_remote_configuration(snapshot)
+            ),
+            (true, Some(branch), Ok(target))
+                if matches!(remote_oid(Path::new(&snapshot.repo), &target, branch), Ok(None))
+        );
     let worktree_absent = actual_worktree_removed(snapshot);
     if worktree_absent && snapshot.removal_plan_id.is_none() {
         let _ = complete_worktree_removal(conn, snapshot);
@@ -2594,12 +2674,21 @@ fn execute_retirement_item(
     snapshot: RetirementSnapshot,
     selection: &WorktreeRetirementSelection,
 ) -> WorktreeRetirementResult {
+    execute_retirement_item_with(conn, snapshot, selection, || windows.clone())
+}
+
+fn execute_retirement_item_with(
+    conn: &Connection,
+    snapshot: RetirementSnapshot,
+    selection: &WorktreeRetirementSelection,
+    protect: impl Fn() -> HashMap<String, Vec<PathBuf>>,
+) -> WorktreeRetirementResult {
     let worktree_removed = snapshot.worktree_removed;
     let local_deleted = snapshot.local_deleted;
     let remote_deleted = snapshot.remote_deleted;
     let fail =
         |step: &str, error: String| retirement_failure(conn, &snapshot, step, error, selection);
-    if let Err(error) = recheck_stable_safety(conn, windows, &snapshot) {
+    if let Err(error) = recheck_stable_safety(conn, &protect(), &snapshot) {
         return fail("validation", error);
     }
     // Validate the exact reviewed checkout before creating a recovery ref or
@@ -2627,7 +2716,7 @@ fn execute_retirement_item(
         return fail("recovery_ref", error);
     }
     if !worktree_removed {
-        if let Err(error) = recheck_stable_safety(conn, windows, &snapshot) {
+        if let Err(error) = recheck_stable_safety(conn, &protect(), &snapshot) {
             return fail("worktree", error);
         }
         if !checkout_already_removed {
@@ -2639,6 +2728,13 @@ fn execute_retirement_item(
             // Unknown files, changed policy and a failed backup keep the folder.
             if let Err(error) = environment::preserve(conn, &entry, &snapshot.plan_id) {
                 return fail("local_files", error);
+            }
+            // Recheck the checkout and leases after configuration capture, at
+            // the last boundary before Git mutates the filesystem.
+            if let Err(error) = recheck_stable_safety(conn, &protect(), &snapshot)
+                .and_then(|_| recheck_checkout(conn, &snapshot))
+            {
+                return fail("validation", error);
             }
             if let Err(error) = begin_worktree_removal(conn, &snapshot) {
                 return fail("worktree", error);
@@ -2673,7 +2769,7 @@ fn execute_retirement_item(
                     .unwrap_or_else(|| "Local branch deletion was not reviewed".into()),
             );
         }
-        if let Err(error) = recheck_stable_safety(conn, windows, &snapshot) {
+        if let Err(error) = recheck_stable_safety(conn, &protect(), &snapshot) {
             return fail("local_branch", error);
         }
         if !local_deleted {
@@ -2772,7 +2868,7 @@ fn execute_retirement_item(
                     .unwrap_or_else(|| "Remote branch deletion was not reviewed".into()),
             );
         }
-        if let Err(error) = recheck_stable_safety(conn, windows, &snapshot) {
+        if let Err(error) = recheck_stable_safety(conn, &protect(), &snapshot) {
             return fail("remote_branch", error);
         }
         if !remote_deleted {
@@ -3106,6 +3202,7 @@ fn execute_retirement_coordinated_with(
             let protected = protect(&windows);
             recheck_stable_safety(conn, &protected, &snapshot)
                 .and_then(|_| recheck_checkout(conn, &snapshot).map(|_| ()))
+                .and_then(|_| automatic::validate_selection(conn, &snapshot, &selection))
                 .and_then(|_| persist_retirement_selection(conn, &snapshot, &selection))
                 .err()
         };
@@ -3134,15 +3231,15 @@ fn execute_retirement_coordinated_with(
         checkout_snapshot.remote_requested = false;
         let mut checkout_result = {
             let windows = host.operation_guard()?;
-            execute_retirement_item(
+            execute_retirement_item_with(
                 conn,
-                &protect(&windows),
                 checkout_snapshot,
                 &WorktreeRetirementSelection {
                     id: selection.id.clone(),
                     delete_local_branch: false,
                     delete_remote_branch: false,
                 },
+                || protect(&windows),
             )
         };
         checkout_result.remote_branch_deleted = completed_remote;
@@ -3396,9 +3493,11 @@ fn overview(
             id: record.map(|v| v.id.clone()),
             path: checkout.path.clone(),
             project_cwd: record
-                .map(|entry| environment::explicit_scope_for_entry(conn, entry))
-                .transpose()?
-                .flatten()
+                .and_then(|entry| {
+                    environment::explicit_scope_for_entry(conn, entry)
+                        .ok()
+                        .flatten()
+                })
                 .map(|scope| scope.main_path),
             branch: checkout.branch.clone(),
             base_ref: record.map(|v| v.base_ref.clone()),
@@ -3423,7 +3522,9 @@ fn overview(
         entries.push(WorktreeEntry {
             id: Some(entry.id.clone()),
             path: entry.path.clone(),
-            project_cwd: environment::explicit_scope_for_entry(conn, entry)?
+            project_cwd: environment::explicit_scope_for_entry(conn, entry)
+                .ok()
+                .flatten()
                 .map(|scope| scope.main_path),
             branch: Some(entry.branch.clone()),
             base_ref: Some(entry.base_ref.clone()),
@@ -3436,6 +3537,8 @@ fn overview(
         });
     }
     Ok(WorktreeOverview {
+        retirement_policy: automatic::policy(conn, &environment::scope_for_cwd(cwd)?)?,
+        automatic_retirement: automatic::project_pending(conn, &environment::scope_for_cwd(cwd)?)?,
         repo,
         project_cwd: environment::scope_for_cwd(cwd)?.main_path,
         settings: settings(conn, cwd)?,
@@ -3910,6 +4013,7 @@ pub fn worktree_list(
 
 #[tauri::command(async)]
 pub fn worktree_settings_set(
+    app: AppHandle,
     store: State<'_, SessionStore>,
     host: State<'_, WorktreeHost>,
     cwd: String,
@@ -3918,7 +4022,9 @@ pub fn worktree_settings_set(
     let common = repository_common(&cwd)?;
     let _repository = host.repository_guard(&common)?;
     let _windows = host.operation_guard()?;
-    update_settings(&store.open_auxiliary_conn()?, &cwd, settings)
+    let result = update_settings(&store.open_auxiliary_conn()?, &cwd, settings);
+    automatic::schedule(&app);
+    result
 }
 
 fn update_settings(
@@ -3930,7 +4036,7 @@ fn update_settings(
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     let environment = environment::save_settings(&tx, &scope, &settings.environment)?;
     // Older databases require retention_days. Keep a compatibility value in
-    // that column; retirement is always explicitly reviewed and has no timer.
+    // that column; archive retirement has a separate versioned preference.
     tx.execute(
         "INSERT INTO worktree_project_settings
            (common_dir, project_path, isolate_by_default, retention_days)
@@ -4187,12 +4293,17 @@ pub fn worktree_heartbeat(
             .map_err(|e| e.to_string())?;
         }
     }
+    let changed = windows.get(window.label()) != Some(&paths);
     windows.insert(window.label().into(), paths);
+    if changed {
+        automatic::schedule(window.app_handle());
+    }
     Ok(())
 }
 
 #[tauri::command(async)]
 pub fn worktree_pin(
+    app: AppHandle,
     store: State<'_, SessionStore>,
     host: State<'_, WorktreeHost>,
     id: String,
@@ -4213,6 +4324,7 @@ pub fn worktree_pin(
         params![pinned, id],
     )
     .map_err(|e| e.to_string())?;
+    automatic::schedule(&app);
     Ok(())
 }
 
@@ -4268,6 +4380,7 @@ pub fn worktree_retire(
     disk::refresh(&app);
     let _ = app.emit("worktree-storage-changed", ());
     storage_maintenance::schedule(&app);
+    automatic::schedule(&app);
     result
 }
 
@@ -4288,6 +4401,7 @@ pub fn worktree_storage_limit_set(
     let usage = storage::set_limit(&store.open_auxiliary_conn()?, limit_bytes, expected_version)?;
     let _ = app.emit("worktree-storage-changed", ());
     storage_maintenance::schedule(&app);
+    automatic::schedule(&app);
     Ok(usage)
 }
 

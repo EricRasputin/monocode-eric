@@ -112,14 +112,21 @@ impl EnvironmentFixture {
     }
 
     fn setup_at(&self, requested_path: &str) -> Result<(), String> {
-        match environment::begin_setup(&self.conn, requested_path)? {
+        let result = match environment::begin_setup(&self.conn, requested_path)? {
             environment::BeginSetup::Skip => Ok(()),
             environment::BeginSetup::Run(operation) => {
                 let result = environment::run_setup(&operation, |_| {});
                 environment::finish_setup(&self.conn, &operation, &result)?;
                 result
             }
+        };
+        if let Some(entry) = owned(&self.conn)?
+            .into_iter()
+            .find(|entry| path_inside(Path::new(requested_path), Path::new(&entry.path)))
+        {
+            disk::release_handoff(&self.host.disk, &self.conn, &entry.path)?;
         }
+        result
     }
 
     fn plan(&self, entry: &Owned) -> WorktreeRetirementPlan {
