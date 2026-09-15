@@ -12,11 +12,10 @@ import {
   type RecoveryStorageUsage,
 } from "../lib/worktreeStorage";
 import { ChevronRight, Loader } from "./icons";
+import { Group, Row, SecondaryButton } from "./SettingsControls";
 
 type SavedLimit = { limitBytes: number; version: number };
 
-const actionButton =
-  "inline-flex items-center justify-center gap-1.5 rounded-md border border-content/10 bg-content/5 px-2.5 py-1.5 text-[12px] font-medium text-content/70 hover:bg-content/8 hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default disabled:opacity-40";
 const input =
   "w-24 rounded-md border border-content/10 bg-content/3 px-2.5 py-1.5 text-right text-[12px] tabular-nums text-content/75 outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/30 disabled:cursor-default disabled:opacity-50";
 
@@ -209,35 +208,21 @@ export function WorktreeRecoveryStorage({
     : 0;
 
   return (
-    <details className="group/recovery border-b border-content/10 pb-5">
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [&::-webkit-details-marker]:hidden">
-        <ChevronRight className="size-3 shrink-0 text-content/35 transition-transform group-open/recovery:rotate-90" />
-        <span>
-          <span className="block text-[12px] font-medium text-content/70">
-            Recovery storage
-          </span>
-          <span className="mt-0.5 block text-[11px] text-content/35">
-            {usage ? (
-              <>
+    <Group
+      title="Recovery storage"
+      description="Space for saved local configuration across all projects."
+    >
+      {usage ? (
+        <>
+          <Row
+            label="Storage used"
+            description={`This project: ${formatRecoveryStorageBytes(projectBytes)}`}
+          >
+            <div className="w-56 max-w-full space-y-2">
+              <div className="text-right text-[12px] text-content/70">
                 {formatRecoveryStorageBytes(usage.usedBytes)} of{" "}
                 {formatRecoveryStorageBytes(usage.limitBytes)} used app-wide
-                {pressureLabel ? (
-                  <span className={pressureColor}> · {pressureLabel}</span>
-                ) : null}
-              </>
-            ) : loading ? (
-              "Checking app-wide usage…"
-            ) : (
-              "App-wide usage unavailable"
-            )}
-          </span>
-        </span>
-      </summary>
-
-      <div className="ml-5 mt-4 space-y-4">
-        {usage ? (
-          <>
-            <div>
+              </div>
               <div
                 role="meter"
                 aria-label="Recovery storage used"
@@ -257,119 +242,109 @@ export function WorktreeRecoveryStorage({
                   style={{ width: `${percentage}%` }}
                 />
               </div>
-              <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px]">
-                <span className={pressureColor}>
-                  {pressureLabel ?? "Storage available"}
-                </span>
-                <span className="text-content/45">
-                  This project: {formatRecoveryStorageBytes(projectBytes)}
-                </span>
-              </div>
+              {pressureLabel ? (
+                <p className={`text-right text-[11px] ${pressureColor}`}>
+                  {pressureLabel}
+                </p>
+              ) : null}
             </div>
-
-            <p className="text-[11px] leading-4 text-content/35">
+          </Row>
+          <Row
+            label="App-wide limit"
+            description="Maximum space available for configuration recovery."
+          >
+            <input
+              aria-label="Recovery storage limit in MB"
+              type="number"
+              inputMode="numeric"
+              min={MIN_RECOVERY_STORAGE_MIB}
+              max={MAX_RECOVERY_STORAGE_MIB}
+              step={1}
+              value={draft}
+              disabled={saving || reloading}
+              className={input}
+              onChange={(event) => {
+                const next = event.target.value;
+                setDraft(next);
+                dirtyRef.current = baselineRef.current
+                  ? next !== limitDraft(baselineRef.current.limitBytes)
+                  : false;
+                setFeedback(undefined);
+              }}
+            />
+            <span className="text-[12px] text-content/45">MB</span>
+            <SecondaryButton
+              disabled={
+                saving || reloading || conflict || !dirty || !validDraft
+              }
+              onClick={() => void save()}
+            >
+              {saving ? <Loader className="size-3.5 animate-spin" /> : null}
+              {saving ? "Saving…" : "Save limit"}
+            </SecondaryButton>
+          </Row>
+          {conflict ? (
+            <div className="flex flex-wrap items-center gap-2 border-t border-content/5 px-4 py-3">
+              <p role="alert" className="text-[12px] text-content/60">
+                The app-wide limit changed elsewhere. Reload the saved limit
+                before saving.
+              </p>
+              <SecondaryButton
+                disabled={saving || reloading}
+                onClick={() => void reloadSavedLimit()}
+              >
+                {reloading ? "Loading…" : "Reload saved limit"}
+              </SecondaryButton>
+              {feedback?.kind === "error" ? (
+                <p role="alert" className="w-full text-[12px] text-red-400">
+                  {feedback.text}
+                </p>
+              ) : null}
+            </div>
+          ) : !validDraft && dirty ? (
+            <p role="alert" className="px-4 py-3 text-[12px] text-red-400">
+              Enter a whole number from {MIN_RECOVERY_STORAGE_MIB} to{" "}
+              {MAX_RECOVERY_STORAGE_MIB} MB.
+            </p>
+          ) : feedback ? (
+            <p
+              role={feedback.kind === "error" ? "alert" : "status"}
+              className={`px-4 py-3 text-[12px] ${
+                feedback.kind === "error" ? "text-red-400" : "text-content/50"
+              }`}
+            >
+              {feedback.text}
+            </p>
+          ) : null}
+          <details className="group/recovery-details border-t border-content/5 px-4 py-3">
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-content/45 hover:text-content/70 focus-visible:outline-1 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="size-3 shrink-0 transition-transform group-open/recovery-details:rotate-90" />
+              About recovery storage
+            </summary>
+            <p className="mt-2 text-[12px] leading-relaxed text-content/45">
               The limit covers recovery data across all projects. Project totals
               may overlap when projects share saved contents.
             </p>
-
-            <div className="flex min-h-8 flex-wrap items-end justify-between gap-3 border-t border-content/8 pt-3">
-              <label className="text-[12px] text-content/65">
-                App-wide limit
-                <span className="mt-1.5 flex items-center gap-1.5">
-                  <input
-                    aria-label="Recovery storage limit in MB"
-                    type="number"
-                    inputMode="numeric"
-                    min={MIN_RECOVERY_STORAGE_MIB}
-                    max={MAX_RECOVERY_STORAGE_MIB}
-                    step={1}
-                    value={draft}
-                    disabled={saving || reloading}
-                    className={input}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      setDraft(next);
-                      dirtyRef.current = baselineRef.current
-                        ? next !== limitDraft(baselineRef.current.limitBytes)
-                        : false;
-                      setFeedback(undefined);
-                    }}
-                  />
-                  <span className="text-[11px] text-content/40">MB</span>
-                </span>
-              </label>
-              <button
-                type="button"
-                className={actionButton}
-                disabled={
-                  saving || reloading || conflict || !dirty || !validDraft
-                }
-                onClick={() => void save()}
-              >
-                {saving ? <Loader className="size-3.5 animate-spin" /> : null}
-                {saving ? "Saving…" : "Save limit"}
-              </button>
-            </div>
-
-            {conflict ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <p role="alert" className="text-[11px] text-content/60">
-                  The app-wide limit changed elsewhere. Reload the saved limit
-                  before saving.
-                </p>
-                <button
-                  type="button"
-                  className={actionButton}
-                  disabled={saving || reloading}
-                  onClick={() => void reloadSavedLimit()}
-                >
-                  {reloading ? "Loading…" : "Reload saved limit"}
-                </button>
-                {feedback?.kind === "error" ? (
-                  <p role="alert" className="w-full text-[11px] text-red-400">
-                    {feedback.text}
-                  </p>
-                ) : null}
-              </div>
-            ) : !validDraft && dirty ? (
-              <p role="alert" className="text-[11px] text-red-400">
-                Enter a whole number from {MIN_RECOVERY_STORAGE_MIB} to{" "}
-                {MAX_RECOVERY_STORAGE_MIB} MB.
+          </details>
+        </>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
+          {loading ? (
+            <p role="status" className="text-[12px] text-content/45">
+              Checking recovery storage…
+            </p>
+          ) : (
+            <>
+              <p role="alert" className="text-[12px] text-red-400">
+                {feedback?.text ?? "Could not read recovery storage."}
               </p>
-            ) : feedback ? (
-              <p
-                role={feedback.kind === "error" ? "alert" : "status"}
-                className={`text-[11px] ${
-                  feedback.kind === "error" ? "text-red-400" : "text-content/50"
-                }`}
-              >
-                {feedback.text}
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            {loading ? (
-              <p role="status" className="text-[11px] text-content/45">
-                Checking recovery storage…
-              </p>
-            ) : (
-              <>
-                <p role="alert" className="text-[11px] text-red-400">
-                  {feedback?.text ?? "Could not read recovery storage."}
-                </p>
-                <button
-                  type="button"
-                  className={actionButton}
-                  onClick={() => void load(true)}
-                >
-                  Try again
-                </button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </details>
+              <SecondaryButton onClick={() => void load(true)}>
+                Try again
+              </SecondaryButton>
+            </>
+          )}
+        </div>
+      )}
+    </Group>
   );
 }

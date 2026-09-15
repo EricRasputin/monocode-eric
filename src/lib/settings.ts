@@ -91,8 +91,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "worktrees",
     group: "workspace",
     label: "Worktrees",
-    description:
-      "Review worktrees by project. Clear generated files or retire finished work.",
+    description: "Configure worktree setup, cleanup, and storage.",
     keywords:
       "checkout disk capacity storage cleanup recovery setup retirement",
   },

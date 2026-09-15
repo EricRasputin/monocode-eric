@@ -143,13 +143,11 @@ it("shows usage, missing folders, reservations, measurement times and shared-byt
 });
 it("saves explicit budget/reserve disabling separately from the allowance", async () => {
   await act(async () => root.render(createElement(WorktreeDiskSettings)));
-  const checkboxes = container.querySelectorAll<HTMLInputElement>(
-    'input[type="checkbox"]',
+  const switches = container.querySelectorAll<HTMLButtonElement>(
+    'button[role="switch"]',
   );
-  await act(async () => {
-    checkboxes[0].click();
-    checkboxes[1].click();
-  });
+  await act(async () => switches[0].click());
+  await act(async () => switches[1].click());
   await enter("Initial preparation allowance in GiB", "7.5");
   await act(async () => button("Save disk settings").click());
   expect(saveWorktreeDiskSettings).toHaveBeenCalledExactlyOnceWith({

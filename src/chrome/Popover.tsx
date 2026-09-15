@@ -187,9 +187,12 @@ export function Popover({
     };
   }, [place]);
 
+  const positioned = position !== null;
   useEffect(() => {
-    if (autoFocus) surface.current?.focus();
-  }, [autoFocus]);
+    // The measurement pass is hidden and cannot receive focus. Later position
+    // updates must leave keyboard focus where the user moved it.
+    if (autoFocus && positioned) surface.current?.focus();
+  }, [autoFocus, positioned]);
 
   useEffect(() => {
     if (!onDismiss) return;

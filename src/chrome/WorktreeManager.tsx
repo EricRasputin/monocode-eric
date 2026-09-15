@@ -9,7 +9,6 @@ import {
   type RecentProject,
 } from "../lib/recents";
 import {
-  Check,
   ChevronRight,
   Worktree,
   Pin,
@@ -36,6 +35,7 @@ import { WorktreeDiskSettings } from "./WorktreeDiskSettings";
 import { WorktreeRecoveryStorage } from "./WorktreeRecoveryStorage";
 import { WorktreeOutputCleanup } from "./WorktreeOutputCleanup";
 import { WorktreeAutomaticRetirement } from "./WorktreeAutomaticRetirement";
+import { Group, SecondaryButton } from "./SettingsControls";
 
 const button =
   "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-content/10 px-2.5 py-1.5 text-[12px] text-content/70 hover:bg-content/8 hover:text-content focus-visible:outline-1 focus-visible:outline-accent disabled:cursor-default disabled:opacity-40";
@@ -52,7 +52,7 @@ function loadCleanupProjects(): CleanupProject[] {
   }));
 }
 
-/** Creation lives in the composer. This screen is only for reviewing disk cleanup. */
+/** Creation lives in the composer; settings configure preparation and cleanup. */
 export function WorktreeManager({
   cwd,
   recents,
@@ -101,8 +101,7 @@ export function WorktreeManager({
     );
   }
   return (
-    <div className="space-y-6">
-      <WorktreeDiskSettings />
+    <div>
       <ProjectWorktreeCleanup
         key={projectKey(selected.path)}
         cwd={selected.path}
@@ -114,6 +113,7 @@ export function WorktreeManager({
         }}
         onOpen={(worktreeCwd) => onOpen(selected.path, worktreeCwd)}
       />
+      <WorktreeDiskSettings />
     </div>
   );
 }
@@ -212,8 +212,9 @@ function ProjectWorktreeCleanup({
   const displayName = (entry: WorktreeEntry) => entry.branch ?? "Detached HEAD";
   const visibleReady = ready.filter(matches);
   return (
-    <section aria-label="Worktree cleanup" className="space-y-6">
-      <div className="flex items-center justify-between gap-4 border-b border-content/10 pb-5">
+    <section aria-label="Worktree cleanup">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-[13px] font-medium text-content/70">Project</span>
         <WorktreeProjectPicker
           cwd={cwd}
           projects={projects}
@@ -221,8 +222,7 @@ function ProjectWorktreeCleanup({
           autoFocus={focusPicker}
           onSelect={onSelectProject}
         />
-        <button
-          className={quietButton}
+        <SecondaryButton
           disabled={busy || pending || !!reviewPlan || outputReviewing}
           onClick={() => void run(() => refreshWorktrees(cwd))}
         >
@@ -231,7 +231,7 @@ function ProjectWorktreeCleanup({
             strokeWidth={1.75}
           />
           Refresh
-        </button>
+        </SecondaryButton>
       </div>
 
       {overview ? (
@@ -253,7 +253,213 @@ function ProjectWorktreeCleanup({
         />
       ) : null}
 
-      <WorktreeRecoveryStorage projectCwd={overview?.projectCwd ?? cwd} />
+      <Group
+        title="Cleanup"
+        description="Review finished worktrees before removing their working folders."
+      >
+        {loadError ? (
+          <div role="alert" className="px-4 py-3.5 text-[12px] text-red-400">
+            {loadError}
+          </div>
+        ) : pending ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 px-4 py-5 text-[12px] text-content/45"
+          >
+            <RefreshCw className="size-4 animate-spin" /> Checking worktrees…
+          </div>
+        ) : (
+          <>
+            <div>
+              <div className="flex min-h-9 flex-wrap items-center justify-between gap-3 border-b border-content/5 px-4 py-3.5">
+                <h3 className="text-[12px] font-medium text-content/70">
+                  Ready to retire{" "}
+                  <span className="ml-1.5 tabular-nums text-content/35">
+                    {ready.length}
+                  </span>
+                </h3>
+                {entries.length > 1 && (
+                  <div className="flex w-48 items-center gap-1.5">
+                    <Search className="size-3.5 shrink-0 text-content/30" />
+                    <input
+                      aria-label="Find worktree to retire"
+                      placeholder="Filter worktrees…"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      className="min-w-0 flex-1 rounded bg-transparent py-1 text-[12px] outline-none placeholder:text-content/30 focus-visible:ring-1 focus-visible:ring-accent"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="divide-y divide-content/5">
+                {visibleReady.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="group flex items-center gap-3 px-4 py-3.5"
+                  >
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${displayName(entry)}`}
+                        checked={selected.includes(entry.id!)}
+                        disabled={busy || !!reviewPlan || outputReviewing}
+                        className="size-3.5 shrink-0 accent-accent"
+                        onChange={(event) =>
+                          setSelection(
+                            event.target.checked
+                              ? [...selected, entry.id!]
+                              : selected.filter((id) => id !== entry.id),
+                          )
+                        }
+                      />
+                      <Worktree
+                        className="size-4 shrink-0 text-content/40"
+                        strokeWidth={1.75}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-medium">
+                          {displayName(entry)}
+                        </span>
+                        <span
+                          className="mt-1 block truncate text-[11px] text-content/35"
+                          title={entry.path}
+                        >
+                          {prettyCwd(entry.path)}
+                        </span>
+                      </span>
+                    </label>
+                    <button
+                      className={quietButton}
+                      title="Keep this worktree"
+                      disabled={busy || !!reviewPlan || outputReviewing}
+                      onClick={() =>
+                        void run(() => pinWorktree(entry.id!, true))
+                      }
+                    >
+                      <Pin className="size-3.5" /> Pin
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {!ready.length && overview ? (
+                <div className="px-4 py-5">
+                  <p className="text-[13px] text-content/70">
+                    Nothing ready to retire
+                  </p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-content/45">
+                    Worktrees in use, pinned, or with uncommitted changes are
+                    kept.
+                  </p>
+                </div>
+              ) : !visibleReady.length ? (
+                <p className="py-8 text-center text-[12px] text-content/40">
+                  No worktrees match “{query}”
+                </p>
+              ) : null}
+
+              {ready.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-content/5 px-4 py-3">
+                  <span className="text-[11px] text-content/40">
+                    {selected.length} selected
+                  </span>
+                  <button
+                    className={`${button} bg-content/5`}
+                    disabled={
+                      busy ||
+                      !!reviewPlan ||
+                      outputReviewing ||
+                      !selected.length
+                    }
+                    onClick={() => void reviewRetirement()}
+                  >
+                    Review retirement ({selected.length}){" "}
+                    <ChevronRight className="size-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <details className="group/kept border-t border-content/5">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3.5 text-[12px] text-content/50 hover:text-content focus-visible:outline-1 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="size-3 transition-transform group-open/kept:rotate-90" />
+                Kept worktrees{" "}
+                <span className="text-content/30">{kept.length}</span>
+              </summary>
+              <div className="divide-y divide-content/5 px-4 pb-1">
+                {kept.filter(matches).map((entry) => (
+                  <div
+                    key={entry.path}
+                    className="flex flex-wrap items-center gap-3 py-3"
+                  >
+                    <Worktree
+                      className="size-4 shrink-0 text-content/30"
+                      strokeWidth={1.75}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className="truncate text-[12px] text-content/70"
+                        title={entry.path}
+                      >
+                        {displayName(entry)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-content/35">
+                        {entry.blockedReason ??
+                          (entry.missing
+                            ? "Working folder is missing"
+                            : "Not available to retire")}
+                      </p>
+                    </div>
+                    {entry.id && (
+                      <button
+                        className={quietButton}
+                        disabled={busy || outputReviewing}
+                        onClick={() =>
+                          void run(() => pinWorktree(entry.id!, !entry.pinned))
+                        }
+                      >
+                        {entry.pinned ? (
+                          <PinOff className="size-3.5" />
+                        ) : (
+                          <Pin className="size-3.5" />
+                        )}
+                        {entry.pinned ? "Unpin" : "Pin"}
+                      </button>
+                    )}
+                    <button
+                      className={quietButton}
+                      disabled={busy || outputReviewing}
+                      onClick={() =>
+                        void run(() =>
+                          onOpen(
+                            worktreeProjectPath(projectLocation, entry.path),
+                          ),
+                        )
+                      }
+                    >
+                      {entry.missing ? "Restore" : "Open"}
+                    </button>
+                  </div>
+                ))}
+                {query && !kept.some(matches) && (
+                  <p className="py-4 text-[12px] text-content/40">
+                    No kept worktrees match “{query}”
+                  </p>
+                )}
+              </div>
+            </details>
+          </>
+        )}
+        {busy && (
+          <p role="status" className="px-4 py-3 text-[12px] text-content/45">
+            Checking…
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="px-4 py-3 text-[12px] text-red-400">
+            {error}
+          </p>
+        )}
+      </Group>
 
       {overview ? (
         <WorktreeOutputCleanup
@@ -265,213 +471,8 @@ function ProjectWorktreeCleanup({
         />
       ) : null}
 
-      <div>
-        <h2 className="text-[13px] font-medium">Cleanup</h2>
-        <p className="mt-1 text-[12px] text-content/45">
-          Choose finished worktrees when you’re ready to remove them.
-        </p>
-      </div>
+      <WorktreeRecoveryStorage projectCwd={overview?.projectCwd ?? cwd} />
 
-      {loadError ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-red-400/20 bg-red-400/5 p-4 text-[12px] text-red-400"
-        >
-          {loadError}
-        </div>
-      ) : pending ? (
-        <div
-          role="status"
-          className="flex items-center gap-2 py-8 text-[12px] text-content/45"
-        >
-          <RefreshCw className="size-4 animate-spin" /> Checking worktrees…
-        </div>
-      ) : (
-        <>
-          <div>
-            <div className="flex min-h-9 flex-wrap items-center justify-between gap-3 border-b border-content/10 pb-2">
-              <h3 className="text-[12px] font-medium text-content/70">
-                Ready to retire{" "}
-                <span className="ml-1.5 tabular-nums text-content/35">
-                  {ready.length}
-                </span>
-              </h3>
-              {entries.length > 1 && (
-                <div className="flex w-48 items-center gap-1.5">
-                  <Search className="size-3.5 shrink-0 text-content/30" />
-                  <input
-                    aria-label="Find worktree to retire"
-                    placeholder="Filter worktrees…"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    className="min-w-0 flex-1 rounded bg-transparent py-1 text-[12px] outline-none placeholder:text-content/30 focus-visible:ring-1 focus-visible:ring-accent"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="divide-y divide-content/5">
-              {visibleReady.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="group flex items-center gap-3 py-4"
-                >
-                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${displayName(entry)}`}
-                      checked={selected.includes(entry.id!)}
-                      disabled={busy || !!reviewPlan || outputReviewing}
-                      className="size-3.5 shrink-0 accent-accent"
-                      onChange={(event) =>
-                        setSelection(
-                          event.target.checked
-                            ? [...selected, entry.id!]
-                            : selected.filter((id) => id !== entry.id),
-                        )
-                      }
-                    />
-                    <Worktree
-                      className="size-4 shrink-0 text-content/40"
-                      strokeWidth={1.75}
-                    />
-                    <span className="min-w-0">
-                      <span className="block truncate text-[12px] font-medium">
-                        {displayName(entry)}
-                      </span>
-                      <span
-                        className="mt-1 block truncate text-[11px] text-content/35"
-                        title={entry.path}
-                      >
-                        {prettyCwd(entry.path)}
-                      </span>
-                    </span>
-                  </label>
-                  <button
-                    className={quietButton}
-                    title="Keep this worktree"
-                    disabled={busy || !!reviewPlan || outputReviewing}
-                    onClick={() => void run(() => pinWorktree(entry.id!, true))}
-                  >
-                    <Pin className="size-3.5" /> Pin
-                  </button>
-                </div>
-              ))}
-            </div>
-            {!ready.length && overview ? (
-              <div className="flex flex-col items-center py-10 text-center">
-                <div className="mb-3 flex size-9 items-center justify-center rounded-full bg-content/5 text-content/35">
-                  <Check className="size-4" />
-                </div>
-                <p className="text-[13px] font-medium text-content/75">
-                  Nothing ready to retire
-                </p>
-                <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-content/40">
-                  Worktrees in use, pinned, or with uncommitted changes stay
-                  safely listed below.
-                </p>
-              </div>
-            ) : !visibleReady.length ? (
-              <p className="py-8 text-center text-[12px] text-content/40">
-                No worktrees match “{query}”
-              </p>
-            ) : null}
-
-            {ready.length > 0 && (
-              <div className="flex items-center justify-between gap-3 border-t border-content/10 py-3">
-                <span className="text-[11px] text-content/40">
-                  {selected.length} selected
-                </span>
-                <button
-                  className={`${button} bg-content/5`}
-                  disabled={
-                    busy || !!reviewPlan || outputReviewing || !selected.length
-                  }
-                  onClick={() => void reviewRetirement()}
-                >
-                  Review retirement ({selected.length}){" "}
-                  <ChevronRight className="size-3" />
-                </button>
-              </div>
-            )}
-          </div>
-
-          <details className="group/kept border-t border-content/10 pt-4">
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-content/50 [&::-webkit-details-marker]:hidden">
-              <ChevronRight className="size-3 transition-transform group-open/kept:rotate-90" />
-              Kept worktrees{" "}
-              <span className="text-content/30">{kept.length}</span>
-            </summary>
-            <div className="mt-2 divide-y divide-content/5">
-              {kept.filter(matches).map((entry) => (
-                <div key={entry.path} className="flex items-center gap-3 py-3">
-                  <Worktree
-                    className="size-4 shrink-0 text-content/30"
-                    strokeWidth={1.75}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p
-                      className="truncate text-[12px] text-content/70"
-                      title={entry.path}
-                    >
-                      {displayName(entry)}
-                    </p>
-                    <p className="mt-1 text-[11px] text-content/35">
-                      {entry.blockedReason ??
-                        (entry.missing
-                          ? "Working folder is missing"
-                          : "Not available to retire")}
-                    </p>
-                  </div>
-                  {entry.id && (
-                    <button
-                      className={quietButton}
-                      disabled={busy || outputReviewing}
-                      onClick={() =>
-                        void run(() => pinWorktree(entry.id!, !entry.pinned))
-                      }
-                    >
-                      {entry.pinned ? (
-                        <PinOff className="size-3.5" />
-                      ) : (
-                        <Pin className="size-3.5" />
-                      )}
-                      {entry.pinned ? "Unpin" : "Pin"}
-                    </button>
-                  )}
-                  <button
-                    className={quietButton}
-                    disabled={busy || outputReviewing}
-                    onClick={() =>
-                      void run(() =>
-                        onOpen(
-                          worktreeProjectPath(projectLocation, entry.path),
-                        ),
-                      )
-                    }
-                  >
-                    {entry.missing ? "Restore" : "Open"}
-                  </button>
-                </div>
-              ))}
-              {query && !kept.some(matches) && (
-                <p className="py-4 text-[12px] text-content/40">
-                  No kept worktrees match “{query}”
-                </p>
-              )}
-            </div>
-          </details>
-        </>
-      )}
-      {busy && (
-        <p role="status" className="text-[12px] text-content/45">
-          Checking…
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="text-[12px] text-red-400">
-          {error}
-        </p>
-      )}
       {reviewPlan ? (
         <WorktreeRetirementDialog
           plan={reviewPlan}
