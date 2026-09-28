@@ -37,6 +37,18 @@ export function ompActiveAssistantTexts(providerSessionId: string): Promise<OmpA
   return invoke<OmpAssistantText[]>("omp_active_assistant_texts", { providerSessionId });
 }
 
+export function claudeShellCommands(
+  providerSessionId: string,
+  providerAccountId: string | undefined,
+  toolIds: string[],
+): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>("claude_shell_commands", {
+    providerSessionId,
+    providerAccountId,
+    toolIds,
+  });
+}
+
 export type FsEntry = {
   name: string;
   path: string;
@@ -405,7 +417,11 @@ export function movePath(from: string, destParent: string): Promise<string> {
   return invoke<string>("move_path", { from, destParent }).then(slash);
 }
 
-/** macOS only. Other platforms return an empty list. */
+/**
+ * Paths for files copied in a file manager, on macOS, Linux and Windows.
+ * Rejects when the clipboard cannot be read; an empty list means it holds no
+ * files.
+ */
 export function clipboardFilePaths(): Promise<string[]> {
   return invoke<string[]>("clipboard_file_paths").then((paths) =>
     paths.map(slash),
@@ -421,17 +437,29 @@ export function revealPath(path: string): Promise<void> {
   return invoke<void>("reveal_path", { path });
 }
 
+export function openPathWithDefaultApp(path: string): Promise<void> {
+  return invoke<void>("open_path_with_default_app", { path });
+}
+
 export function homeDir(): Promise<string> {
   return invoke<string>("home_dir");
 }
 
-export async function pickFolder(title = "Open project"): Promise<string | null> {
+/**
+ * Folders chosen from the system picker. Multi-select is on, so several
+ * projects can be opened in one pass; the dialog still returns a bare string
+ * when only one was taken.
+ */
+export async function pickFolders(title = "Open projects"): Promise<string[]> {
   const selected = await open({
     directory: true,
-    multiple: false,
+    multiple: true,
     title,
   });
-  return typeof selected === "string" && selected ? slash(selected) : null;
+  if (Array.isArray(selected)) {
+    return selected.filter((path) => !!path).map(slash);
+  }
+  return typeof selected === "string" && selected ? [slash(selected)] : [];
 }
 
 export async function pickFiles(title = "Attach files"): Promise<string[] | null> {

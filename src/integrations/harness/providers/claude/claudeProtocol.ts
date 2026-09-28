@@ -5,7 +5,11 @@ import type {
   ToolPreview,
   TurnMetrics,
 } from "../../../../features/sessions/model/session";
-import { attachmentPathText } from "../../../../features/sessions/model/attachments";
+import {
+  attachmentPathText,
+  promptText,
+} from "../../../../features/sessions/model/attachments";
+import { parseResetTimestamp } from "../../../../features/providers/model/rateLimits";
 import { isTaskListToolName, taskListFromToolInput } from "../../../../features/sessions/model/taskList";
 import {
   questionPromptTitle,
@@ -186,7 +190,10 @@ export function buildClaudeUserMessage(input: {
   attachments?: Attachment[];
   effort?: string | null;
 }): Record<string, unknown> {
-  const text = applyClaudePromptEffortPrefix(input.text.trim(), input.effort);
+  const text = applyClaudePromptEffortPrefix(
+    promptText(input.text, input.attachments ?? []),
+    input.effort,
+  );
   const content: Array<Record<string, unknown>> = [];
   if (text) content.push({ type: "text", text });
   for (const attachment of input.attachments ?? []) {
@@ -489,6 +496,34 @@ export function turnStatusFromResult(rec: Record<string, unknown>): {
   return { status: "failed", error: error ?? "Claude turn failed." };
 }
 
+/**
+ * A `rate_limit_event` that refuses requests, with when its window resets.
+ * `null` once requests are allowed again, or while extra usage is paying for
+ * them and the turn goes on.
+ */
+export function usageLimitFromRateLimitEvent(
+  rec: Record<string, unknown>,
+): { resetsAt?: number } | null {
+  const info = asRecord(rec.rate_limit_info);
+  if (stringField(info, "status") !== "rejected") return null;
+  if (info?.isUsingOverage === true) return null;
+  const resetsAt = parseResetTimestamp(info?.resetsAt);
+  return resetsAt != null ? { resetsAt } : {};
+}
+
+const USAGE_LIMIT_TEXT = /hit your (?:usage )?limit|usage limit reached/i;
+
+/** Claude also ends a limited turn with the limit as its error text. */
+export function isUsageLimitResult(rec: Record<string, unknown>): boolean {
+  if (rec.is_error !== true) return false;
+  const errors = Array.isArray(rec.errors)
+    ? rec.errors.filter((item): item is string => typeof item === "string")
+    : [];
+  return [stringField(rec, "result") ?? "", ...errors].some((text) =>
+    USAGE_LIMIT_TEXT.test(text),
+  );
+}
+
 export function streamDeltaFromEvent(
   rec: Record<string, unknown>,
 ): { kind: "assistant" | "reasoning"; text: string } | null {
@@ -690,15 +725,16 @@ export function parseTaskNotification(
   };
 }
 
-export type ClaudeBackgroundAgentTask = {
+export type ClaudeBackgroundTask = {
   taskId: string;
   taskType: string;
   description: string;
 };
 
-export function parseBackgroundAgentTasks(
+/** Every task Claude is running for the session: subagents, shells, monitors. */
+export function parseBackgroundTasks(
   rec: Record<string, unknown>,
-): ClaudeBackgroundAgentTask[] | null {
+): ClaudeBackgroundTask[] | null {
   if (
     stringField(rec, "type") !== "system" ||
     stringField(rec, "subtype") !== "background_tasks_changed"
@@ -711,7 +747,7 @@ export function parseBackgroundAgentTasks(
     if (!row || row.ambient === true) return [];
     const taskId = stringField(row, "task_id");
     const taskType = stringField(row, "task_type") ?? "";
-    if (!taskId || !isAgentTaskType(taskType)) return [];
+    if (!taskId) return [];
     return [
       {
         taskId,

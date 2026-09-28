@@ -22,6 +22,7 @@ export type ProjectSearchOptions = {
   regex?: boolean;
   include?: string;
   exclude?: string;
+  searchId: string;
 };
 
 export type EditorNavigation = {
@@ -37,6 +38,8 @@ export type EditorNavigationTarget = EditorNavigation & {
 export type FileOpenOptions = {
   /** The caller obtained this concrete path from the filesystem or file index. */
   exact?: boolean;
+  /** Open as a permanent tab instead of the pane's preview tab. */
+  pin?: boolean;
 };
 
 export type OpenFileFn = (
@@ -57,4 +60,11 @@ export function searchProject(
   options: ProjectSearchOptions,
 ): Promise<ProjectSearchResult> {
   return invoke<ProjectSearchResult>("search_project", { options });
+}
+
+export function cancelProjectSearch(
+  cwd: string,
+  searchId: string,
+): Promise<void> {
+  return invoke<void>("cancel_project_search", { cwd, searchId });
 }

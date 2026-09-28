@@ -16,7 +16,7 @@ import {
   isTodoTool,
   listModelsFromControlResponse,
   normalizeClaudeCliEffort,
-  parseBackgroundAgentTasks,
+  parseBackgroundTasks,
   parseClaudeVersion,
   parseControlRequest,
   parseControlResponse,
@@ -37,6 +37,8 @@ import {
   toolTitle,
   turnStatusFromResult,
   turnMetricsFromResult,
+  isUsageLimitResult,
+  usageLimitFromRateLimitEvent,
 } from "./claudeProtocol";
 
 describe("runtimeModeToPermission", () => {
@@ -150,6 +152,18 @@ describe("buildClaudeSpawnArgs", () => {
     expect(args).not.toContain("--permission-prompt-tool");
   });
 
+  it("locks isolated read-only prompts to plan mode", () => {
+    const args = buildClaudeSpawnArgs({
+      isolated: true,
+      permissionMode: "plan",
+      maxTurns: 1,
+      model: "claude-haiku-4-5",
+    });
+    expect(args).toEqual(
+      expect.arrayContaining(["--permission-mode", "plan", "--max-turns", "1"]),
+    );
+  });
+
   it("adds bypass flag for full-access", () => {
     const args = buildClaudeSpawnArgs({
       permissionMode: "bypassPermissions",
@@ -259,6 +273,53 @@ describe("stream mapping", () => {
       name: "Read",
       input: { file_path: "a.ts" },
     });
+  });
+});
+
+describe("usage limits", () => {
+  it("reads a refused window and when it resets", () => {
+    expect(
+      usageLimitFromRateLimitEvent({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "rejected",
+          resetsAt: 1_790_000_000,
+          rateLimitType: "five_hour",
+        },
+      }),
+    ).toEqual({ resetsAt: 1_790_000_000_000 });
+  });
+
+  it("ignores allowed windows and extra usage", () => {
+    expect(
+      usageLimitFromRateLimitEvent({
+        rate_limit_info: { status: "allowed_warning", resetsAt: 1 },
+      }),
+    ).toBeNull();
+    expect(
+      usageLimitFromRateLimitEvent({
+        rate_limit_info: { status: "rejected", isUsingOverage: true },
+      }),
+    ).toBeNull();
+  });
+
+  it("recognizes a limit in an errored result", () => {
+    expect(
+      isUsageLimitResult({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "You've hit your limit · resets 3am (Europe/Sofia)",
+      }),
+    ).toBe(true);
+    expect(
+      isUsageLimitResult({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "You've hit your limit",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -503,6 +564,34 @@ describe("list_models catalog", () => {
     expect(
       models[0]?.settings?.find((setting) => setting.id === "context")?.value,
     ).toBe("1m");
+  });
+
+  it("launches a versioned short value with the claude- prefix", () => {
+    const models = modelsFromClaudeListModels([
+      {
+        value: "opus-5-5",
+        resolvedModel: "claude-opus-5-5",
+        displayName: "Opus 5.5",
+      },
+      {
+        value: "opus",
+        resolvedModel: "claude-opus-5-5",
+        displayName: "Opus",
+      },
+    ]);
+
+    expect(models.map((model) => model.nativeId)).toEqual([
+      "claude-opus-5-5",
+      "opus",
+    ]);
+    expect(models[0]).toMatchObject({
+      id: "claude:opus-5-5",
+      nativeId: "claude-opus-5-5",
+    });
+    expect(models[1]).toMatchObject({
+      id: "claude:opus",
+      nativeId: "opus",
+    });
   });
 
   it("parses success and error control responses", () => {
@@ -824,7 +913,7 @@ describe("subagent messages", () => {
       summary: "Found the tokens",
     });
     expect(
-      parseBackgroundAgentTasks({
+      parseBackgroundTasks({
         type: "system",
         subtype: "background_tasks_changed",
         tasks: [
@@ -848,6 +937,7 @@ describe("subagent messages", () => {
       }),
     ).toEqual([
       { taskId: "t1", taskType: "local_agent", description: "Explore" },
+      { taskId: "bash_1", taskType: "local_bash", description: "sleep 10" },
     ]);
     expect(
       parseToolProgress({
