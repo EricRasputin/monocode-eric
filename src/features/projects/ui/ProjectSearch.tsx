@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  cancelProjectSearch,
   searchProject,
   type OpenFileFn,
   type ProjectSearchMatch,
@@ -53,6 +54,7 @@ export function ProjectSearch({
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<ProjectSearchMatch[]>([]);
   const [truncated, setTruncated] = useState(false);
+  const activeSearchId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!focusToken) return;
@@ -83,11 +85,14 @@ export function ProjectSearch({
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
+      const searchId = crypto.randomUUID();
+      activeSearchId.current = searchId;
       setLoading(true);
       setError(null);
       void searchProject({
         cwd,
         query: trimmed,
+        searchId,
         caseSensitive,
         wholeWord,
         regex,
@@ -106,12 +111,20 @@ export function ProjectSearch({
           setTruncated(false);
           setError(err instanceof Error ? err.message : String(err));
           setLoading(false);
+        })
+        .finally(() => {
+          if (activeSearchId.current === searchId) activeSearchId.current = null;
         });
     }, 200);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      const searchId = activeSearchId.current;
+      activeSearchId.current = null;
+      if (searchId) {
+        void cancelProjectSearch(cwd, searchId).catch(() => undefined);
+      }
     };
   }, [caseSensitive, cwd, exclude, include, query, regex, wholeWord]);
 
@@ -119,11 +132,11 @@ export function ProjectSearch({
   const matchCount = matches.length;
   const fileCount = groups.length;
 
-  const openMatch = (match: ProjectSearchMatch) => {
+  const openMatch = (match: ProjectSearchMatch, pin = false) => {
     onOpenFile(
       match.path,
       { line: match.line, column: match.column },
-      { exact: true },
+      { exact: true, pin },
     );
   };
 
@@ -257,6 +270,7 @@ export function ProjectSearch({
                   <button
                     type="button"
                     onClick={() => openMatch(match)}
+                    onDoubleClick={() => openMatch(match, true)}
                     className="flex w-full items-start gap-2 px-2 py-1 text-left hover:bg-content/5"
                   >
                     <span className="w-7 shrink-0 pt-px text-right font-mono text-[11px] text-content/35 tabular-nums">

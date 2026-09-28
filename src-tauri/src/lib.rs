@@ -1,5 +1,6 @@
 use tauri::Manager;
 
+mod account_identity;
 mod automations;
 mod azure_devops;
 mod chat_background;
@@ -12,16 +13,22 @@ mod fs;
 mod gitlab;
 mod harness;
 mod inbox_media;
+mod jira;
 mod linear;
 mod link_preview;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod macos_background;
 mod menu;
 mod notes;
 mod notifications;
 mod pasteboard;
+mod pi_usage;
 mod project_logo;
 mod pty;
+#[cfg(target_os = "macos")]
+mod quick_composer;
 mod rate_limits;
 mod reminders;
 mod search;
@@ -191,6 +198,10 @@ fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     window::open_new_window(&app)
 }
 
+fn should_request_quit(code: Option<i32>) -> bool {
+    code.is_some() || cfg!(any(target_os = "linux", target_os = "windows"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(windows)]
@@ -200,12 +211,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&[
+                    window::QUICK_COMPOSER_LABEL,
+                    window::QUICK_COMPOSER_GIT_LABEL,
+                ])
+                .build(),
+        )
         .manage(harness::HarnessHost::new())
         .manage(pty::PtyHost::new())
         .manage(window_transfer::WindowTransferState::new())
         .setup(|app| {
             harness::reap_orphaned_harness_processes();
+            // Start loading the login-shell PATH before the first git call needs it.
+            std::thread::spawn(harness::gui_search_path);
             session_store::init(app.handle())?;
             control::init(app.handle())?;
             reminders::init(app.handle());
@@ -215,6 +235,7 @@ pub fn run() {
             tray::install(app.handle())?;
             #[cfg(target_os = "macos")]
             {
+                quick_composer::init(app.handle())?;
                 macos::install_dock_menu(app.handle());
                 if let Some(window) = app.get_webview_window("main") {
                     macos::install(&window);
@@ -243,6 +264,7 @@ pub fn run() {
             control::control_attach_worker,
             control::control_authorize_turn,
             control::control_turn_finished,
+            control::app_cli_path,
             default_cwd,
             home_dir,
             notifications::notification_permission,
@@ -268,6 +290,7 @@ pub fn run() {
             external_editor::list_external_editors,
             external_editor::open_in_external_editor,
             fs::resolve_project_location,
+            fs::open_path_with_default_app,
             fs::list_dir,
             fs::list_project_files,
             fs::git_diff_stats,
@@ -305,6 +328,8 @@ pub fn run() {
             fs::git_github_work_item_comment,
             fs::git_github_pr_action,
             fs::git_github_pr_diff,
+            fs::git_github_pr_checks,
+            fs::git_github_check_details,
             inbox_media::fetch_inbox_media,
             gitlab::gitlab_status,
             gitlab::gitlab_set_config,
@@ -331,6 +356,13 @@ pub fn run() {
             linear::linear_issue_details,
             linear::linear_issue_thread,
             linear::linear_issue_comment,
+            jira::jira_status,
+            jira::jira_set_config,
+            jira::jira_list_projects,
+            jira::jira_list_issues,
+            jira::jira_issue_details,
+            jira::jira_issue_thread,
+            jira::jira_issue_comment,
             link_preview::fetch_link_preview,
             fs::git_branches,
             fs::git_checkout,
@@ -351,6 +383,7 @@ pub fn run() {
             fs::move_path,
             fs::reveal_path,
             pasteboard::clipboard_file_paths,
+            pasteboard::clipboard_image,
             pasteboard::copy_file_to_clipboard,
             fs::clone_repo,
             fs::read_file_preview,
@@ -362,14 +395,18 @@ pub fn run() {
             fs::read_text_file,
             fs::omp_session_interjections,
             fs::omp_active_assistant_texts,
+            fs::claude_shell_commands,
             fs::write_text_file,
             skills::list_skills,
             search::search_project,
+            search::cancel_project_search,
             cursor_store::cursor_tool_calls,
             cursor_store::cursor_subagent_runs,
             harness::harness_resolve_cursor,
             harness::harness_resolve_codex,
             harness::harness_resolve_opencode,
+            harness::harness_resolve_configured,
+            harness::harness_runtime_binary_paths,
             harness::harness_resolve_claude,
             harness::harness_resolve_omp,
             harness::harness_resolve_pi,
@@ -387,6 +424,8 @@ pub fn run() {
             harness::harness_sse_close,
             harness::harness_exec,
             harness::provider_account_remove,
+            account_identity::provider_account_identity,
+            pi_usage::fetch_pi_usage,
             rate_limits::fetch_claude_usage,
             rate_limits::fetch_opencode_go_usage,
             pty::pty_spawn,
@@ -400,6 +439,7 @@ pub fn run() {
             session_store::session_rebase_project,
             session_store::session_list_linked,
             session_store::session_search,
+            session_store::cancel_session_search,
             session_store::session_get,
             session_store::session_delete,
             session_store::session_set_archived,
@@ -429,6 +469,8 @@ pub fn run() {
             set_traffic_lights_visible,
             set_window_background_blur,
             set_dock_badge,
+            #[cfg(target_os = "macos")]
+            menu::keybindings_set_overrides,
             open_new_window,
             window::hide_window,
             window::destroy_window,
@@ -436,6 +478,32 @@ pub fn run() {
             window::quit_decision,
             window::quit_ready,
             window::set_window_glass_enabled,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_set_enabled,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_prepare,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_fit,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_submit,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_take,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_ack,
+            #[cfg(target_os = "macos")]
+            quick_composer::screenshots::quick_composer_release_capture,
+            #[cfg(target_os = "macos")]
+            quick_composer::quick_composer_capture,
+            #[cfg(target_os = "macos")]
+            quick_composer::git_popup::quick_git_open,
+            #[cfg(target_os = "macos")]
+            quick_composer::git_popup::quick_git_state,
+            #[cfg(target_os = "macos")]
+            quick_composer::git_popup::quick_git_fit,
+            #[cfg(target_os = "macos")]
+            quick_composer::git_popup::quick_git_complete,
+            #[cfg(target_os = "macos")]
+            quick_composer::git_popup::quick_composer_dismiss,
             window_transfer::stage_window_transfer,
             window_transfer::take_window_transfer,
             chat_background::save_chat_background,
@@ -473,7 +541,9 @@ pub fn run() {
             ..
         } => {
             window::forget_quit_window(handle, &label);
-            let other_window = handle.webview_windows().keys().any(|name| name != &label);
+            let other_window = window::workspace_windows(handle)
+                .iter()
+                .any(|window| window.label() != label);
             control::window_closed(handle, &label);
             if !other_window {
                 reap_harness_children(handle);
@@ -486,10 +556,8 @@ pub fn run() {
             api.prevent_exit();
             // Last window destroyed (red button). Stay in the dock on macOS;
             // ⌘Q is a separate menu handler and arrives with an exit code.
-            // Windows has no dock, so the last close is a quit.
-            if code.is_none() {
-                #[cfg(target_os = "windows")]
-                window::request_quit(handle);
+            // Linux and Windows have no dock, so the last close is a quit.
+            if !should_request_quit(code) {
                 return;
             }
             window::request_quit(handle);
@@ -513,4 +581,26 @@ fn reap_harness_children(handle: &tauri::AppHandle) {
 #[cfg(all(debug_assertions, target_os = "macos"))]
 pub fn ensure_macos_dev_bundle() {
     macos::ensure_dev_bundle();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_request_quit;
+
+    #[test]
+    fn explicit_exit_requests_quit() {
+        assert!(should_request_quit(Some(0)));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn last_window_close_requests_quit_without_dock() {
+        assert!(should_request_quit(None));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn last_window_close_stays_alive_with_dock() {
+        assert!(!should_request_quit(None));
+    }
 }
