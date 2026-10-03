@@ -1110,14 +1110,12 @@ const gitTheme = EditorView.theme({
     boxShadow: "inset -3px 0 0 var(--color-diff-del)",
   },
   ".cm-gitInsertedLine": {
-    backgroundColor:
-      "color-mix(in srgb, var(--color-diff-add) 18%, transparent)",
+    backgroundColor: "var(--color-diff-add-bg)",
     boxShadow: "inset 3px 0 0 var(--color-diff-add)",
   },
   ".cm-gitDeletedLine": {
     padding: "0 12px 0 6px",
-    backgroundColor:
-      "color-mix(in srgb, var(--color-diff-del) 16%, transparent)",
+    backgroundColor: "var(--color-diff-del-bg)",
     boxShadow: "inset 3px 0 0 var(--color-diff-del)",
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
