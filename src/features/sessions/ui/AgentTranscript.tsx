@@ -4171,10 +4171,18 @@ function ToolCall({
   embedded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const frameRef = useRef<HTMLDivElement>(null);
   const preview = block.tool?.preview;
   const label = toolCallLabel(block, cwd);
   const detail = block.tool?.detail?.trim();
   const expanded = detail && detail !== label ? detail : label;
+  // A Mono chat renders its pending approvals here. Like the trail, the
+  // row shows the raw command it is asking to run once the label hides any
+  // of it: lines left out, or a one-liner the row cuts off.
+  const pending = needsApproval(block);
+  const call = pending ? toolCallInput(block, label, true) : undefined;
+  const truncated = useTruncated(frameRef, !!call && !call.hidden, label);
+  const callInput = call && (call.hidden || truncated) ? call.text : undefined;
   const state = toolCallState(block);
   const stateLabel =
     state === "accepted"
@@ -4235,7 +4243,7 @@ function ToolCall({
   if (isIncompleteTool(block, label, state)) return null;
 
   return (
-    <div className={frame}>
+    <div ref={frameRef} className={frame}>
       {expandable ? (
         <button
           type="button"
@@ -4275,6 +4283,14 @@ function ToolCall({
       {open && expandable ? (
         <pre className="mt-1.5 min-w-0 whitespace-pre-wrap break-words px-2.5 font-mono text-[12px] leading-5 text-content/55">
           {expanded}
+        </pre>
+      ) : null}
+      {callInput ? (
+        <pre
+          aria-label="Full tool call"
+          className="mt-1.5 max-h-64 min-w-0 select-text overflow-auto whitespace-pre-wrap break-all px-2.5 font-mono text-[12px] leading-5 text-content/50"
+        >
+          {callInput}
         </pre>
       ) : null}
       <ApprovalControls block={block} onApproval={onApproval} />

@@ -33,10 +33,15 @@ afterEach(() => {
 
 const script = "python3 - <<'PY'\nimport sys\nprint(sys.argv)\nPY";
 
-function render(blocks: Block[], busy = true) {
+function render(blocks: Block[], busy = true, inlineWork = false) {
   act(() =>
     root.render(
-      createElement(AgentTranscript, { blocks, busy, onApproval: () => {} }),
+      createElement(AgentTranscript, {
+        blocks,
+        busy,
+        inlineWork,
+        onApproval: () => {},
+      }),
     ),
   );
 }
@@ -281,6 +286,37 @@ describe("tool call disclosure", () => {
     expect(
       container.querySelector('pre[aria-label="Full tool call"]')?.textContent,
     ).toBe(command);
+  });
+
+  it("shows the command a Mono chat approval asks to run", () => {
+    const script = "sed -n 1,10p src/app.ts\nsed -n 1,80p src/main.ts";
+    render(
+      [
+        { id: "user", role: "user", text: "Read it" },
+        {
+          id: "sed",
+          role: "tool",
+          text: "Read src/main.ts",
+          tool: { kind: "execute", status: "pending", input: script },
+          approval: { requestId: 1 },
+        },
+      ],
+      true,
+      true,
+    );
+    expect(container.querySelector("[data-mono-work]")).not.toBeNull();
+    const panel = container.querySelector<HTMLPreElement>(
+      'pre[aria-label="Full tool call"]',
+    );
+    expect(panel?.textContent).toBe(script);
+    const approve = Array.from(container.querySelectorAll("button")).find(
+      (button) => /allow|approve/i.test(button.textContent ?? ""),
+    );
+    expect(approve).not.toBeUndefined();
+    expect(
+      panel!.compareDocumentPosition(approve!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows the raw command above the buttons while it waits on approval", () => {
